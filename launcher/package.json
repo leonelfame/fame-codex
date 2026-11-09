@@ -1,6 +1,6 @@
 {
   "name": "fame-codex-launcher",
-  "version": "6.1.16",
+  "version": "6.1.17",
   "private": true,
   "description": "Desktop control center for Fame Codex",
   "author": "leonelfame",
@@ -65,6 +65,7 @@
       "package.json"
     ],
     "extraResources": [
+      { "from": "assets/aipass", "to": "aipass" },
       {
         "from": "build/runtime",
         "to": "runtime"

@@ -143,7 +143,22 @@ export interface ReleaseCheckResult {
   downloadUrl: string | null;
 }
 
+export interface AiPassStatus {
+  enabled: boolean;
+  status: "disabled" | "stopped" | "starting" | "running" | "stopping" | "error";
+  port: 17843;
+  extensionConnected: boolean;
+  models: { id: string; name: string }[];
+  error: string | null;
+  contextWindow: 16384;
+}
+
 export interface LauncherApi {
+  getAiPassStatus?(): Promise<AiPassStatus>;
+  setAiPassEnabled?(enabled: boolean): Promise<AiPassStatus>;
+  refreshAiPassModels?(): Promise<AiPassStatus>;
+  openAiPassExtensionFolder?(): Promise<boolean>;
+  openAiPassWebsite?(): Promise<boolean>;
   snapshot(): Promise<LauncherSnapshot>;
   getLimits(): Promise<LimitsSnapshot>;
   setupLimits(): Promise<LimitsSnapshot>;

@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Fame Codex · TH AI Pass",
+  "version": "0.2.0",
+  "description": "Connect your signed-in TH AI Pass tab to the local Fame Codex bridge.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "scripting",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://de.aipass.net/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://de.aipass.net/*"
+      ],
+      "js": [
+        "page.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://de.aipass.net/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "world": "ISOLATED",
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Fame Codex · TH AI Pass"
+  }
+}

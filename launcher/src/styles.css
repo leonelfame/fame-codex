@@ -2722,3 +2722,34 @@ code {
   .activity-task-detail { flex-basis: calc(100% - 30px); }
   .activity-task > button { margin-left: 22px; }
 }
+
+.aipass-settings {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-background-elevated);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.aipass-settings p { margin: 6px 0; color: var(--color-text-secondary); }
+.aipass-settings ol { padding-left: 20px; margin: 10px 0; }
+.aipass-badge { color: var(--color-text-accent); font-size: var(--text-xs); }
+.aipass-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.aipass-actions button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-background-button-secondary);
+  color: var(--color-text-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.aipass-actions button:hover { background: var(--color-background-button-secondary-hover); }
+.aipass-actions button:disabled { opacity: .5; cursor: default; }
+.aipass-settings button:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 3px; }
+.aipass-settings .aipass-error { color: var(--color-text-error); }
+.aipass-models { max-height: 180px; overflow: auto; padding-left: 20px; overflow-wrap: anywhere; }
+.aipass-models code { color: var(--color-text-tertiary); }
+.aipass-settings .aipass-hint { font-size: var(--text-xs); }

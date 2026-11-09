@@ -21,6 +21,7 @@ const {
 } = require("electron");
 const { BrowserHost, navigationErrorForLog } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
+const { AiPassController } = require("./aipass-controller.cjs");
 const { LimitsController } = require("./limits-controller.cjs");
 const { SOURCE_URL: LIMITS_SOURCE_URL } = require("./limits-store.cjs");
 const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
@@ -109,6 +110,78 @@ let catalogVerificationTimer = null;
 let catalogVerificationInFlight = false;
 let updateController = null;
 let limitsController = null;
+let aiPassController = null;
+let createAiPassController = null;
+let aiPassQueue = Promise.resolve();
+const AIPASS_ROOT = app.isPackaged
+  ? path.join(process.resourcesPath, "aipass")
+  : path.join(__dirname, "..", "assets", "aipass");
+const AIPASS_CONFIG_PATH = path.join(CORE_HOME, "aipass.json");
+
+function readAiPassConfig() {
+  let value;
+  try { value = JSON.parse(fs.readFileSync(AIPASS_CONFIG_PATH, "utf8")); }
+  catch (error) {
+    if (error.code === "ENOENT") return { version: 1, enabled: false, models: [], contextWindow: 16384 };
+    throw error;
+  }
+  if (value?.version !== 1 || typeof value.enabled !== "boolean" || value.contextWindow !== 16384
+    || !Array.isArray(value.models) || value.models.length > 256
+    || value.models.some(model => !model || typeof model.id !== "string" || !model.id.trim()
+      || model.id.length > 256 || /[\x00-\x1f\x7f]/.test(model.id)
+      || typeof model.name !== "string" || !model.name.trim() || model.name.length > 256)) {
+    throw new Error("Invalid TH AI Pass settings in aipass.json");
+  }
+  return { version: 1, enabled: value.enabled,
+    models: value.models.map(({ id, name }) => ({ id, name })), contextWindow: 16384 };
+}
+
+function writeAiPassConfig(config) {
+  fs.mkdirSync(CORE_HOME, { recursive: true, mode: 0o700 });
+  const temporary = `${AIPASS_CONFIG_PATH}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(temporary, AIPASS_CONFIG_PATH);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+function queueAiPass(operation) {
+  const result = aiPassQueue.then(operation);
+  aiPassQueue = result.catch(() => {});
+  return result;
+}
+
+function aiPassSnapshot() {
+  const config = readAiPassConfig();
+  return { ...(aiPassController?.snapshot() ?? {
+    status: config.enabled ? "stopped" : "disabled", port: 17843,
+    extensionConnected: false, models: [], error: null,
+  }), enabled: config.enabled, contextWindow: 16384 };
+}
+
+async function updateAiPass(enabled) {
+  const config = readAiPassConfig();
+  if (enabled !== undefined && typeof enabled !== "boolean") throw new Error("TH AI Pass enabled must be a boolean");
+  const nextEnabled = enabled ?? config.enabled;
+  if (!aiPassController && nextEnabled) aiPassController = createAiPassController();
+  if (enabled !== undefined) {
+    writeAiPassConfig({ ...config, enabled: nextEnabled });
+    if (aiPassController) {
+      aiPassController.enabled = nextEnabled;
+      if (nextEnabled) await aiPassController.start();
+      else await aiPassController.stop();
+    }
+  } else if (aiPassController && nextEnabled) {
+    await aiPassController.start();
+  }
+  const snapshot = aiPassSnapshot();
+  writeAiPassConfig({ ...config, enabled: nextEnabled,
+    models: snapshot.extensionConnected && snapshot.status === "running"
+      ? snapshot.models.map(({ id, name }) => ({ id, name })) : [] });
+  return snapshot;
+}
 
 function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -556,6 +629,21 @@ function registerIpc({ logger, stateStore }) {
   const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, async (...args) => {
     if (runtimeChannels.has(channel)) await runtimeStartup;
     return handler(...args);
+  });
+  handle("launcher:aipass-status", () => queueAiPass(() => aiPassSnapshot()));
+  handle("launcher:aipass-enabled", (_event, enabled) => queueAiPass(() => {
+    if (typeof enabled !== "boolean") throw new Error("TH AI Pass enabled must be a boolean");
+    return updateAiPass(enabled);
+  }));
+  handle("launcher:aipass-refresh", () => queueAiPass(() => updateAiPass()));
+  handle("launcher:aipass-extension", async () => {
+    const error = await shell.openPath(path.join(AIPASS_ROOT, "extension"));
+    if (error) throw new Error(error);
+    return true;
+  });
+  handle("launcher:aipass-website", async () => {
+    await shell.openExternal("https://de.aipass.net/");
+    return true;
   });
   handle("launcher:limits", () => limitsController.snapshot());
   handle("launcher:limits-setup", async () => {
@@ -1106,6 +1194,8 @@ async function requestQuit() {
       throw new Error(`Wait for ${activeOperation} to finish before quitting Fame Codex`);
     }
     await runtimeSupervisor?.shutdown({ cancelActiveTurns: true, force: true });
+    await aiPassQueue;
+    await aiPassController?.stop();
     stopCatalogVerificationMonitor();
     quitting = true;
     await browserHost?.persistSession();
@@ -1282,6 +1372,19 @@ async function start() {
     publish: (state) => send("launcher:update-state", state),
     logger,
   });
+  createAiPassController = () => {
+    const runtimeExecutable = updaterRuntimeRoot
+      ? runtimeBundlePaths(updaterRuntimeRoot, process.platform).executable
+      : runtimeBundlePaths(path.join(__dirname, "..", "build", "runtime"), process.platform).executable;
+    const scriptPath = path.join(AIPASS_ROOT, "bridge", "server.mjs");
+    if (!fs.existsSync(runtimeExecutable) || !fs.existsSync(scriptPath)) {
+      throw new Error("TH AI Pass bundled runtime or bridge is missing");
+    }
+    return new AiPassController({ enabled: true, runtimeExecutable, scriptPath, port: 17843 });
+  };
+  void queueAiPass(async () => {
+    if (readAiPassConfig().enabled) await updateAiPass(true);
+  }).catch(error => logger.warn("aipass.start_failed", { message: String(error) }));
   registerIpc({ logger, stateStore });
   const trayAvailable = createTray(logger, stateStore.read().language);
   if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());

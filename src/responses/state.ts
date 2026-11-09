@@ -16,6 +16,7 @@ const SNAPSHOT_TOTAL_MAX_BYTES = 24 * 1024 * 1024;
 
 interface StoredResponseState {
   createdAt: number;
+  provider?: "aipass";
   items: unknown[];
   /** Approximate in-memory size, computed locally at insert time (never trusted from disk). */
   sizeBytes?: number;
@@ -93,6 +94,7 @@ function ensureLoaded(): void {
       setEntry(id, {
         createdAt: rec.createdAt,
         items: rec.items,
+        ...(rec.provider === "aipass" ? { provider: "aipass" } : {}),
       });
     }
     pruneResponses();
@@ -182,7 +184,14 @@ export function expandPreviousResponseInput(body: unknown): unknown {
   ensureLoaded();
   pruneResponses();
   const previous = states.get(previousId);
-  if (!previous) return body;
+  const aiPass = typeof request.model === "string" && request.model.startsWith("aipass/");
+  if (!previous) {
+    if (aiPass) throw new Error("TH AI Pass previous_response_id is unavailable. Resend full history or start a new session.");
+    return body;
+  }
+  if (aiPass !== (previous.provider === "aipass")) {
+    throw new Error("Cannot replay previous_response_id across TH AI Pass and another provider. Resend full history.");
+  }
   const expanded = {
     ...request,
     input: [...previous.items, ...inputItems(request.input)],
@@ -223,6 +232,7 @@ export function rememberResponseState(
   ensureLoaded();
   setEntry(response.id, {
     createdAt: now(),
+    ...(typeof request.model === "string" && request.model.startsWith("aipass/") ? { provider: "aipass" as const } : {}),
     items: [...inputItems(request.input), ...response.output],
   });
   pruneResponses();

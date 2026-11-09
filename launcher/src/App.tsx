@@ -11,6 +11,7 @@ import {
 import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import { LimitsSurface } from "./LimitsSurface";
+import { AiPassSettings } from "./AiPassSettings";
 import { UpdatesSettings } from "./UpdatesSettings";
 import { limitsCopyFor } from "./limits-copy";
 import { useLimits } from "./useLimits";
@@ -1885,6 +1886,7 @@ function SettingsSurface({
 
   return (
     <ContentSurface narrow title={devProfile ? copy.devSettingsTitle : copy.settingsTitle}>
+      {api?.getAiPassStatus ? <AiPassSettings api={api} language={language} /> : null}
       <UpdatesSettings api={api!} includeBeta={snapshot.state.includePrereleaseUpdates} language={language} updateState={updateState} version={snapshot.version} />
       <SectionHeading label={copy.general} spaced />
       <div className="settings-list">

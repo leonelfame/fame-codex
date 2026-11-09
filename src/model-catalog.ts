@@ -1,4 +1,5 @@
 import type { AppConfig } from "./config";
+import { AIPASS_MODEL_PREFIX, isAiPassModel, readAiPassSettings } from "./aipass-config";
 import type { CodexModelContextOverride } from "./codex-integration";
 import {
   availableChatGptWebModelRoutes,
@@ -60,7 +61,7 @@ function nativeTemplateCandidate(value: unknown, requireTools: boolean): value i
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const model = value as JsonObject;
   const modelSlug = slug(model);
-  if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX)) return false;
+  if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX) || isAiPassModel(modelSlug)) return false;
   // This route forwards ChatGPT authentication. Codex's own model manager keeps every list-visible
   // model in ChatGPT mode even when `supported_in_api` is false; that flag gates API-key mode, not
   // whether the backend row is a valid catalog template. The routed Web row overrides the flag to
@@ -172,7 +173,7 @@ export function augmentNativeModelCatalog(
     throw new Error("Native Codex models response is missing a models array");
   }
   const nativeModels = structuredClone(
-    catalog.models.filter(model => !slug(model)?.startsWith(CHATGPT_WEB_MODEL_PREFIX)),
+    catalog.models.filter(model => !slug(model)?.startsWith(CHATGPT_WEB_MODEL_PREFIX) && !isAiPassModel(slug(model))),
   );
   if (config.subagentProtocol === "compatibility-v1") {
     for (const candidate of nativeModels) {
@@ -202,8 +203,27 @@ export function augmentNativeModelCatalog(
   }
   const webModels = availableChatGptWebModelRoutes(config, true)
     .map(route => buildChatGptWebModel(template, route, config));
+  const aiPass = readAiPassSettings();
+  const aiPassModels = aiPass.enabled ? aiPass.models.map(row => {
+    const model: JsonObject = {
+      ...structuredClone(template),
+      slug: `${AIPASS_MODEL_PREFIX}${row.id}`,
+      display_name: `TH AI Pass · ${row.name}`,
+      description: "Experimental browser bridge. Text only. Local 16K prompt budget; remote compaction unavailable.",
+      input_modalities: ["text"], visibility: "list", supported_in_api: true,
+      multi_agent_version: "disabled", tool_mode: null, upgrade: null,
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [{ effort: "medium", description: "Uses the model's web default" }],
+      context_window: aiPass.contextWindow, max_context_window: aiPass.contextWindow,
+      effective_context_window_percent: 100, auto_compact_token_limit: aiPass.contextWindow,
+      additional_speed_tiers: [], service_tiers: [], default_service_tier: null,
+    };
+    delete model.comp_hash;
+    delete model.availability_nux;
+    return model;
+  }) : [];
   return {
     ...structuredClone(catalog),
-    models: [...nativeModels, ...webModels],
+    models: [...nativeModels, ...webModels, ...aiPassModels],
   };
 }

@@ -7,6 +7,11 @@ function subscription(channel, listener) {
 }
 
 contextBridge.exposeInMainWorld("codexWebLauncher", {
+  getAiPassStatus: () => ipcRenderer.invoke("launcher:aipass-status"),
+  setAiPassEnabled: (enabled) => ipcRenderer.invoke("launcher:aipass-enabled", enabled),
+  refreshAiPassModels: () => ipcRenderer.invoke("launcher:aipass-refresh"),
+  openAiPassExtensionFolder: () => ipcRenderer.invoke("launcher:aipass-extension"),
+  openAiPassWebsite: () => ipcRenderer.invoke("launcher:aipass-website"),
   snapshot: () => ipcRenderer.invoke("launcher:snapshot"),
   getLimits: () => ipcRenderer.invoke("launcher:limits"),
   setupLimits: () => ipcRenderer.invoke("launcher:limits-setup"),

@@ -1,4 +1,6 @@
 import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
+import { isAiPassModel } from "./aipass-config";
+import { aiPassResponseRequest } from "./aipass-responses";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { timingSafeEqual } from "node:crypto";
@@ -642,6 +644,7 @@ export async function responseRequest(
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
+  if (isAiPassModel(requestedModel)) return aiPassResponseRequest(req, raw);
   if (typeof requestedModel === "string" && !isChatGptWebModelSlug(requestedModel)) {
     try {
       return await forwardNativeCodexRequest(nativeRequest, "responses", undefined, raw);
@@ -890,6 +893,9 @@ export async function compactRequest(
   }
   if (typeof raw.model !== "string" || !raw.model) {
     return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
+  }
+  if (isAiPassModel(raw.model)) {
+    return formatErrorResponse(400, "invalid_request_error", "TH AI Pass experimental bridge does not support remote compaction. Start a new session or choose another model.");
   }
   if (!isChatGptWebModelSlug(raw.model)) {
     try {
