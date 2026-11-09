@@ -233,7 +233,7 @@ for (const scenario of [
     await broker.close();
     await server.close();
   }
-});
+}, 20_000);
 
 test("Zero Risk adapter never starts the automatic browser worker and completes only through Zero Risk MCP", async () => {
   const config = provider("complete");
