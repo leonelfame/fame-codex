@@ -10,6 +10,76 @@ const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.c
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
 const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
 
+test("Sleep IPC blocks active turns and publishes restart state only after routing succeeds", async () => {
+  const vm = require("node:vm");
+  const handlers = new Map(), calls = [], events = [];
+  const state = { codexRestartRequired: false };
+  let sleeping = false, failure = false;
+  const sandbox = {
+    handle: (channel, handler) => handlers.set(channel, handler), IS_DEV_PROFILE: false,
+    browserHost: { activeTraceId: "active", currentOperation: () => null },
+    runtimeHost: { bridgeStatus: async () => ({ active: !sleeping }), setSleeping: async value => {
+      calls.push(value); if (failure) throw new Error("route failed"); sleeping = value; return { sleeping };
+    } },
+    stateStore: { update: patch => Object.assign(state, patch) },
+    send: (...args) => events.push(args),
+  };
+  const start = electronMain.indexOf('handle("launcher:sleep-status",');
+  vm.runInNewContext(electronMain.slice(start, electronMain.indexOf('\n  handle(', electronMain.indexOf('handle("launcher:sleep",', start) + 1)), sandbox);
+  const sleep = handlers.get("launcher:sleep");
+  await assert.rejects(sleep(null, true), /Finish or cancel/);
+  assert.equal(calls.length, 0);
+  sandbox.browserHost.activeTraceId = null;
+  assert.equal((await sleep(null, true)).sleeping, true);
+  assert.equal(state.codexRestartRequired, true);
+  assert.equal((await handlers.get("launcher:sleep-status")()).sleeping, true);
+  assert.equal((await sleep(null, false)).sleeping, false);
+  const published = events.length;
+  failure = true;
+  await assert.rejects(sleep(null, true), /route failed/);
+  assert.equal(events.length, published);
+  sandbox.IS_DEV_PROFILE = true;
+  await assert.rejects(sleep(null, true), /production launcher/);
+});
+
+test("MCP reconnect reveals credential fields when the saved pair has disappeared", async () => {
+  const ts = require("typescript");
+  const vm = require("node:vm");
+  const start = appSource.indexOf("function McpSurface(");
+  const source = appSource.slice(start, appSource.indexOf("\nfunction ", start + 1));
+  let cursor = 0, setupCalls = 0;
+  const state = [];
+  const snapshot = { state: { browserInteractionMode: "automatic", mcpGuideStep: 1,
+    codexCatalogVerified: true }, mcpCredentialsConfigured: true };
+  const sandbox = {
+    element: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState: initial => { const index = cursor++; if (!(index in state)) state[index] = initial;
+      return [state[index], value => { state[index] = value; }]; },
+    useMemo: fn => fn(), useEffect() {}, messageOf: String,
+    api: {
+      snapshot: async () => ({ ...snapshot, mcpCredentialsConfigured: false }),
+      setupMcp: async () => { setupCalls++; }, setMcpStep: async () => snapshot.state,
+    },
+  };
+  for (const name of ["ContentSurface", "NoticeRow", "Icon", "FieldRow", "PrimaryButton", "SecondaryButton"])
+    sandbox[name] = name;
+  vm.runInNewContext(ts.transpileModule(source, { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, jsxFactory: "element",
+    jsxFragmentFactory: "fragment",
+  } }).outputText + "\nrender = McpSurface;", Object.assign(sandbox, { fragment: "fragment" }));
+  const props = { snapshot, interactionMode: "automatic", copy: new Proxy({}, { get: (_, key) => key }),
+    setError() {}, updateState() {}, operation: null };
+  const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
+    ? [tree, ...visit(tree.children ?? [])] : [];
+  const render = () => { cursor = 0; return visit(sandbox.render(props)); };
+  assert.equal(render().filter(node => node.type === "input").length, 0);
+  render().find(node => node.type === "PrimaryButton").props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(setupCalls, 0);
+  assert.equal(render().filter(node => node.type === "input").length, 2);
+  assert.equal(render().find(node => node.type === "PrimaryButton").props.disabled, true);
+});
+
 test("Bigger Context waits for startup and route recovery without invalidating healthy setup", async () => {
   const vm = require("node:vm");
   for (const fails of [false, true]) {

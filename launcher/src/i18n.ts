@@ -1,6 +1,11 @@
 import type { Language } from "./types";
 
 const en = {
+  sleepTitle: "Sleep Fame Codex",
+  sleep: "Sleep",
+  wake: "Wake",
+  sleepBody: "Temporarily remove Fame Codex routing from Codex and restore your previous configuration. Restart Codex after changing this.",
+  sleepingBody: "Sleeping. Codex uses your previous configuration. Wake restores Fame Codex routing. Restart Codex afterward.",
   pluginName: "Plugin name",
   pluginNameBody: "Fame Codex stays fixed. Edit the rest of the name.",
   pluginNameChange: "Change name",
@@ -230,6 +235,11 @@ const en = {
 } as const;
 
 const zh: Record<keyof typeof en, string> = {
+  sleepTitle: "休眠 Fame Codex",
+  sleep: "休眠",
+  wake: "唤醒",
+  sleepBody: "暂时移除 Codex 中的 Fame Codex 路由并恢复原配置。更改后请重启 Codex。",
+  sleepingBody: "已休眠，Codex 使用原配置。唤醒可恢复 Fame Codex 路由，之后请重启 Codex。",
   pluginName: "插件名称",
   pluginNameBody: "Fame Codex 保持不变，可以修改其后的名称。",
   pluginNameChange: "更改名称",
@@ -459,6 +469,11 @@ const zh: Record<keyof typeof en, string> = {
 };
 
 const ja: Record<keyof typeof en, string> = {
+  sleepTitle: "Fame Codex をスリープ",
+  sleep: "スリープ",
+  wake: "再開",
+  sleepBody: "Codex から Fame Codex の接続設定を一時的に外し、元の設定に戻します。変更後は Codex を再起動してください。",
+  sleepingBody: "スリープ中です。Codex は元の設定を使用します。再開すると Fame Codex の設定に戻ります。その後 Codex を再起動してください。",
   pluginName: "プラグイン名",
   pluginNameBody: "Fame Codex は固定です。それ以降の名前を編集できます。",
   pluginNameChange: "名前を変更",
@@ -688,6 +703,11 @@ const ja: Record<keyof typeof en, string> = {
 };
 
 const ko: Record<keyof typeof en, string> = {
+  sleepTitle: "Fame Codex 절전",
+  sleep: "절전",
+  wake: "다시 연결",
+  sleepBody: "Codex의 Fame Codex 연결 설정을 잠시 해제하고 이전 설정을 복원합니다. 변경 후 Codex를 다시 시작하세요.",
+  sleepingBody: "절전 중입니다. Codex는 이전 설정을 사용합니다. 다시 연결한 후 Codex를 다시 시작하세요.",
   pluginName: "플러그인 이름",
   pluginNameBody: "Fame Codex는 고정입니다. 뒤에 오는 이름을 변경하세요.",
   pluginNameChange: "이름 변경",
@@ -917,6 +937,11 @@ const ko: Record<keyof typeof en, string> = {
 };
 
 const zhTW: Record<keyof typeof en, string> = {
+  sleepTitle: "休眠 Fame Codex",
+  sleep: "休眠",
+  wake: "喚醒",
+  sleepBody: "暫時移除 Codex 中的 Fame Codex 路由並還原原設定。變更後請重新啟動 Codex。",
+  sleepingBody: "已休眠，Codex 使用原設定。喚醒可恢復 Fame Codex 路由，之後請重新啟動 Codex。",
   pluginName: "外掛程式名稱",
   pluginNameBody: "Fame Codex 保持不變，可以修改後面的名稱。",
   pluginNameChange: "變更名稱",

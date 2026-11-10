@@ -154,6 +154,8 @@ export interface AiPassStatus {
 }
 
 export interface LauncherApi {
+  getSleepStatus(): Promise<{ sleeping: boolean }>;
+  setSleeping(sleeping: boolean): Promise<{ sleeping: boolean }>;
   getAiPassStatus?(): Promise<AiPassStatus>;
   setAiPassEnabled?(enabled: boolean): Promise<AiPassStatus>;
   refreshAiPassModels?(): Promise<AiPassStatus>;

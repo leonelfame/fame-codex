@@ -893,6 +893,16 @@ class RuntimeHost {
     }
   }
 
+  async setSleeping(sleeping) {
+    this.assertProductionProfile("Fame Codex sleep");
+    if (typeof sleeping !== "boolean") throw new Error("Sleep state must be a boolean");
+    const route = sleeping
+      ? await this.restoreBridgeRoute("bridge-sleep")
+      : await this.connectBridgeRoute();
+    if (route.active === sleeping) throw new Error("Codex sleep state could not be verified");
+    return { sleeping: !route.active };
+  }
+
   async connectBridgeRoute({ recoveryOnly = false } = {}) {
     this.assertProductionProfile("Codex bridge routing");
     const name = "bridge-connect";
@@ -1412,6 +1422,9 @@ class RuntimeHost {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const targetMode = interactionMode ?? this.browserInteractionMode();
     const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured(targetMode);
+    if (!reuseSavedCredentials && replace !== true && !tunnelId && !runtimeKey) {
+      throw new Error("Saved tunnel credentials are no longer available. Enter the Tunnel ID and API key again.");
+    }
     if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
       throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
     }
@@ -1463,6 +1476,9 @@ class RuntimeHost {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const targetMode = interactionMode ?? this.browserInteractionMode();
     const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured(targetMode);
+    if (!reuseSavedCredentials && replace !== true && !tunnelId && !runtimeKey) {
+      throw new Error("Saved tunnel credentials are no longer available. Enter the Tunnel ID and API key again.");
+    }
     if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
       throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
     }

@@ -1357,6 +1357,15 @@ function McpSurface({
       : false,
   );
   const [replacingCredentials, setReplacingCredentials] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void api!.snapshot().then((latest) => {
+      if (!cancelled) setCredentialsConfigured(
+        interactionMode === latest.state.browserInteractionMode && latest.mcpCredentialsConfigured,
+      );
+    }).catch((cause) => { if (!cancelled) setError(messageOf(cause)); });
+    return () => { cancelled = true; };
+  }, [interactionMode, setError]);
   const [localBusy, setLocalBusy] = useState(false);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
@@ -1397,6 +1406,13 @@ function McpSurface({
     setLocalBusy(true);
     setError(null);
     try {
+      if (credentialsConfigured && !replacingCredentials) {
+        const latest = await api!.snapshot();
+        const available = interactionMode === latest.state.browserInteractionMode
+          && latest.mcpCredentialsConfigured;
+        setCredentialsConfigured(available);
+        if (!available) return;
+      }
       await api!.setupMcp({
         interactionMode,
         ...(credentialsConfigured && !replacingCredentials
@@ -1411,6 +1427,11 @@ function McpSurface({
       await move(2);
     } catch (cause) {
       setError(messageOf(cause));
+      try {
+        const latest = await api!.snapshot();
+        setCredentialsConfigured(interactionMode === latest.state.browserInteractionMode
+          && latest.mcpCredentialsConfigured);
+      } catch { /* Keep the original setup error visible if the runtime cannot be inspected. */ }
     } finally {
       setLocalBusy(false);
     }
@@ -1738,6 +1759,28 @@ function SettingsSurface({
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const [sleeping, setSleeping] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (devProfile || !snapshot.state.coreSetupComplete) return;
+    let cancelled = false;
+    void api!.getSleepStatus().then(result => {
+      if (!cancelled) setSleeping(result.sleeping);
+    }).catch(cause => { if (!cancelled) setError(messageOf(cause)); });
+    return () => { cancelled = true; };
+  }, [devProfile, snapshot.state.coreSetupComplete, setError]);
+  const toggleSleep = async () => {
+    if (sleeping === null || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api!.setSleeping(!sleeping);
+      setSleeping(result.sleeping);
+      updateState((await api!.snapshot()).state);
+    } catch (cause) {
+      setError(messageOf(cause));
+      try { setSleeping((await api!.getSleepStatus()).sleeping); } catch { setSleeping(null); }
+    } finally { setBusy(false); }
+  };
   const currentPluginName = snapshot.connectorNames[snapshot.state.browserInteractionMode];
   const [nameSuffix, setNameSuffix] = useState(currentPluginName.slice("Fame Codex ".length));
   const [confirmNameChange, setConfirmNameChange] = useState(false);
@@ -1890,6 +1933,13 @@ function SettingsSurface({
       <UpdatesSettings api={api!} includeBeta={snapshot.state.includePrereleaseUpdates} language={language} updateState={updateState} version={snapshot.version} />
       <SectionHeading label={copy.general} spaced />
       <div className="settings-list">
+        {!devProfile && snapshot.state.coreSetupComplete ? (
+          <SettingRow label={copy.sleepTitle} body={sleeping ? copy.sleepingBody : copy.sleepBody}>
+            <SecondaryButton disabled={busy || sleeping === null || integrationRemoved} onClick={() => void toggleSleep()}>
+              {busy ? copy.running : sleeping ? copy.wake : copy.sleep}
+            </SecondaryButton>
+          </SettingRow>
+        ) : null}
         {!devProfile ? <SettingRow body={copy.launchAtLoginBody} flushAfter label={copy.launchAtLogin}>
           <Switch
             checked={snapshot.state.autoStart}

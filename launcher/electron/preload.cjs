@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   openAiPassExtensionFolder: () => ipcRenderer.invoke("launcher:aipass-extension"),
   openAiPassWebsite: () => ipcRenderer.invoke("launcher:aipass-website"),
   snapshot: () => ipcRenderer.invoke("launcher:snapshot"),
+  getSleepStatus: () => ipcRenderer.invoke("launcher:sleep-status"),
+  setSleeping: (sleeping) => ipcRenderer.invoke("launcher:sleep", sleeping),
   getLimits: () => ipcRenderer.invoke("launcher:limits"),
   setupLimits: () => ipcRenderer.invoke("launcher:limits-setup"),
   setLanguage: (language) => ipcRenderer.invoke("launcher:set-language", language),

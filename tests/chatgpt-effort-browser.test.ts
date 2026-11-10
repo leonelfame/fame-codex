@@ -2,8 +2,19 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright-core";
 import { ChatGptBrowserWorker, setChatGptThinkMode } from "../src/adapters/chatgpt-web/browser-worker";
-import { CHATGPT_COMPOSER_SELECTOR, detectChatGptAccountCapabilities } from "../src/chatgpt-session";
+import { CHATGPT_COMPOSER_SELECTOR, detectChatGptAccountCapabilities, waitForChatGptEffortControl } from "../src/chatgpt-session";
 import { assertChatGptModelFamily } from "../src/adapters/chatgpt-web/model-selection";
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("model detection recognizes the current composer reasoning button without retired attributes", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<form><div id="prompt-textarea" contenteditable="true"></div>
+      <button type="button" aria-haspopup="menu" aria-label="Select ChatGPT model"
+        data-composer-navigation-target="reasoning" data-selected-reasoning-effort="medium">6 Medium</button></form>`);
+    expect(await waitForChatGptEffortControl(page, { selectorTimeoutMs: 500, stableAbsenceMs: 100 })).toBeDefined();
+  } finally { await browser.close(); }
+});
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-5.6 Pro verifies the split model/effort header before Send (#875)", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });

@@ -619,6 +619,7 @@ function syncBrowserPreferences(stateStore, config) {
 function registerIpc({ logger, stateStore }) {
   const runtimeChannels = new Set([
     "launcher:setup-core", "launcher:setup-mcp", "launcher:uninstall-integration",
+    "launcher:sleep", "launcher:sleep-status",
     "launcher:composer-predictions", "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
     "launcher:use-saved-chats", "launcher:zero-risk-pro", "launcher:browser-interaction-mode",
     "launcher:auto-approve-tool-calls",
@@ -631,6 +632,20 @@ function registerIpc({ logger, stateStore }) {
     return handler(...args);
   });
   handle("launcher:aipass-status", () => queueAiPass(() => aiPassSnapshot()));
+  handle("launcher:sleep-status", async () => {
+    const route = await runtimeHost.bridgeStatus();
+    return { sleeping: !route.active };
+  });
+  handle("launcher:sleep", async (_event, sleeping) => {
+    if (IS_DEV_PROFILE) throw new Error("Sleep is available only in the production launcher");
+    if (browserHost.activeTraceId || browserHost.currentOperation()) {
+      throw new Error("Finish or cancel the active turn before changing Sleep");
+    }
+    const result = await runtimeHost.setSleeping(sleeping);
+    const state = stateStore.update({ codexRestartRequired: true });
+    send("launcher:state-changed", state);
+    return result;
+  });
   handle("launcher:aipass-enabled", (_event, enabled) => queueAiPass(() => {
     if (typeof enabled !== "boolean") throw new Error("TH AI Pass enabled must be a boolean");
     return updateAiPass(enabled);

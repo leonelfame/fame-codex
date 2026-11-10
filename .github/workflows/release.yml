@@ -179,11 +179,16 @@ jobs:
               --draft=false \
               "${release_flags[@]}"
           else
+            notes_flags=(--generate-notes)
+            notes_path="docs/release-${GITHUB_REF_NAME#v}.md"
+            if [ -f "$notes_path" ]; then
+              notes_flags=(--notes-file "$notes_path")
+            fi
             gh release create "$GITHUB_REF_NAME" "${release_files[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$GITHUB_REF_NAME" \
               "${release_flags[@]}" \
-              --generate-notes
+              "${notes_flags[@]}"
           fi
 
           published_manifest="$(mktemp)"

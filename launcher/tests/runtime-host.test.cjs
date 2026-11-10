@@ -631,6 +631,19 @@ test("new MCP setup uses the fixed connector without a CLI name override", async
   assert.equal(fixture.host.setupConnectorName(), CURRENT_CONNECTOR_NAME);
 });
 
+test("reconnecting after saved credentials disappear asks for credentials instead of validating an empty ID", async () => {
+  for (const factory of [hostFor, devHostFor]) {
+    const fixture = factory({ mode: "browser-only" });
+    await assert.rejects(
+      Promise.resolve().then(() => factory === hostFor
+        ? fixture.host.setupMcp({ replace: false })
+        : fixture.host.setupDevMcp({ replace: false })),
+      /Saved tunnel credentials are no longer available/,
+    );
+    assert.equal(fixture.invocation(), undefined);
+  }
+});
+
 test("MCP credential replacement remains explicit and requires a complete new pair", async () => {
   const fixture = hostFor(null);
   await assert.rejects(
@@ -695,6 +708,20 @@ function bridgeFixture({ active, recovery = false }) {
   };
   return { calls, host, supervisor };
 }
+
+test("Sleep persists across startup recovery and Wake explicitly reconnects", async () => {
+  const fixture = bridgeFixture({ active: true });
+  assert.deepEqual(await fixture.host.setSleeping(true), { sleeping: true });
+  assert.equal((await fixture.host.connectBridgeRoute({ recoveryOnly: true })).active, false);
+  assert.deepEqual(await fixture.host.setSleeping(true), { sleeping: true });
+  assert.deepEqual(await fixture.host.setSleeping(false), { sleeping: false });
+  assert.deepEqual(await fixture.host.setSleeping(false), { sleeping: false });
+  assert.equal(fixture.calls.filter(call => call === "route disconnect").length, 1);
+  assert.equal(fixture.calls.filter(call => call === "route connect").length, 1);
+  await assert.rejects(fixture.host.setSleeping("true"), /must be a boolean/);
+  fixture.host.lifecycleOperation = "mcp-setup";
+  await assert.rejects(fixture.host.setSleeping(true), /Another launcher operation/);
+});
 
 test("launcher connects an inactive installed route", async () => {
   const fixture = bridgeFixture({ active: false });
