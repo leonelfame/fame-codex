@@ -98,6 +98,9 @@ test("Bigger Context waits for startup and route recovery without invalidating h
     const context = vm.createContext({
       runtimeStartup, finishRuntimeStartup: () => { startupSettled = true; finishRuntimeStartup(); },
       startupAuthenticationRefresh, logger, stateStore, IS_DEV_PROFILE: false,
+      SessionReminderView: class {}, mainWindow: {}, loadRenderer() {},
+      createReleaseCheckController: require("../electron/release-check.cjs").createReleaseCheckController,
+      app: { getVersion: () => "6.1.19" }, process,
       ipcMain: { on() {} }, registerLoggedIpc: (_ipc, _logger, channel, handler) => handlers.set(channel, handler),
       send() {}, publishOperation() {}, startCatalogVerificationMonitor() {},
       browserHost: { turnTabs: new Map() },
@@ -464,12 +467,48 @@ test("Zero Risk setup commits state after the runtime transaction and preserves 
 
 });
 
-test("MCP connection remains unavailable until the model catalog is verified", () => {
-  assert.match(
-    appSource,
-    /manualInteraction \|\| configuringInactiveMode \|\| snapshot\.state\.codexCatalogVerified[\s\S]*?copy\.mcpStepTwoHint[\s\S]*?copy\.mcpCatalogRequired/,
-  );
-  assert.match(appSource, /!manualInteraction && !configuringInactiveMode && !snapshot\.state\.codexCatalogVerified/);
+test("installed integration can connect MCP while the native catalog refresh is pending", async () => {
+  const ts = require("typescript");
+  const vm = require("node:vm");
+  const surfaces = appSource.slice(appSource.indexOf("function SetupSurface("), appSource.indexOf("function SettingsSurface("));
+  const transpile = (source, fileName) => ts.transpileModule(source, { fileName,
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+      jsx: ts.JsxEmit.React, jsxFactory: "element" } }).outputText;
+  const translated = { exports: {} };
+  vm.runInNewContext(transpile(fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8"), "i18n.ts"), translated);
+  let connected = 0;
+  const sandbox = {
+    element: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState: value => [value, () => {}], useMemo: callback => callback(), useEffect() {},
+    React: { Fragment: "Fragment" },
+    AnimatePresence: "AnimatePresence", motion: { section: "section" }, PANEL_TRANSITION: {},
+    MCP_GUIDE_MEDIA: ["fixture", "fixture", "fixture"], messageOf: String,
+    api: { setupMcp: async () => { connected++; }, snapshot: async () => ({ state: { browserInteractionMode: "automatic" }, mcpCredentialsConfigured: true }), setMcpStep: async () => ({}) },
+  };
+  for (const name of ["ContentSurface", "SectionHeading", "SetupRow", "PrimaryButton", "SecondaryButton", "NoticeRow", "Icon", "DoctorSummary", "FieldRow", "ZeroRiskModelMenu", "McpMark", "TutorialVideo"]) sandbox[name] = name;
+  vm.runInNewContext(transpile(surfaces, "surfaces.tsx") + "\nrenderSetup = SetupSurface; renderMcp = McpSurface;", sandbox);
+  const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
+    ? [tree, ...visit(tree.children ?? [])] : [];
+  for (const language of ["en", "zh-CN", "ja", "ko", "zh-TW"]) {
+    const copy = translated.exports.copyFor(language);
+    for (const installed of [false, true]) {
+      const snapshot = { state: { browserInteractionMode: "automatic", coreSetupComplete: installed,
+        codexCatalogVerified: false, codexRestartRequired: true, mcpGuideStep: 1 },
+        smokePassed: true, mcpCredentialsConfigured: true };
+      const base = { snapshot, copy, devProfile: false, operation: null, updateState() {}, setError(error) { if (error) throw new Error(error); } };
+      const setup = visit(sandbox.renderSetup({ ...base, activateBrowser: async () => {}, browser: { authenticated: true }, showMcp() {} }));
+      assert.equal(setup.find(node => node.type === "SetupRow" && node.props.index === 3).props.complete, installed);
+      assert.equal(setup.find(node => node.props.className === "next-surface-row").props.disabled, !installed);
+      assert.ok(setup.some(node => node.type === "NoticeRow" && node.children.includes(copy.restartCodex)));
+      const mcp = visit(sandbox.renderMcp({ ...base, language, interactionMode: "automatic", onDone() {} }));
+      const connect = mcp.find(node => node.type === "PrimaryButton" && node.children.includes(copy.reconnect));
+      assert.ok(connect);
+      assert.equal(connect.props.disabled, !installed);
+      if (installed) { connect.props.onClick(); await new Promise(resolve => setImmediate(resolve)); }
+      assert.equal(snapshot.state.codexCatalogVerified, false, "connecting must not fabricate native catalog verification");
+    }
+  }
+  assert.equal(connected, 5);
 });
 
 test("MCP navigation remains locked while an operation is active", () => {
@@ -590,16 +629,16 @@ test("browser preference IPC commits only after setup succeeds and refuses activ
   const vm = require("node:vm");
   for (const [property, method, channel, nextChannel] of [
     ["composerPredictionsEnabled", "setComposerPredictions", "launcher:composer-predictions", "launcher:skill-attachments"],
-    ["experimentalFreshConversationPerTurn", "setFreshConversationPerTurn", "launcher:fresh-conversation-per-turn", "launcher:use-saved-chats"],
-    ["useSavedChats", "setUseSavedChats", "launcher:use-saved-chats", "launcher:auto-approve-tool-calls"],
+    ["experimentalFreshConversationPerTurn", "setFreshConversationPerTurn", "launcher:fresh-conversation-per-turn", "launcher:temporary-chats"],
+    ["useTemporaryChats", "setTemporaryChats", "launcher:temporary-chats", "launcher:auto-approve-tool-calls"],
     ["autoApproveToolCalls", "setAutoApproveToolCalls", "launcher:auto-approve-tool-calls", "launcher:zero-risk-pro"],
   ]) {
     const source = electronMain.slice(
       electronMain.indexOf(`handle("${channel}",`),
       electronMain.indexOf(`handle("${nextChannel}",`),
     );
-    const state = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
-    const config = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
+    const state = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useTemporaryChats: false, autoApproveToolCalls: false };
+    const config = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useTemporaryChats: false, autoApproveToolCalls: false };
     const events = [];
     let handler, finishSetup, setupFailure, calls = 0;
     const browserHost = { activeTraceId: "running-turn", currentOperation: () => null, turnTabs: new Map() };
@@ -694,8 +733,8 @@ test("fresh-conversation snapshot uses runtime configuration and mode switching 
 
 test("changing Bigger Context retires ready automatic chats before a previous mode can reuse them", () => {
   const vm = require("node:vm");
-  const state = { experimentalBiggerContext: false, experimentalFreshConversationPerTurn: false,
-    useSavedChats: true, autoApproveToolCalls: false, biggerContextAvailable: true };
+  const state = { experimentalBiggerContext: false, experimentalFreshConversationPerTurn: false, useTemporaryChats: false,
+    autoApproveToolCalls: false, biggerContextAvailable: true };
   const tabs = new Map([
     ["old", { status: "ready", conversationKey: "old-luna", interactionMode: "automatic" }],
     ["active", { status: "running", conversationKey: "running", interactionMode: "automatic" }],
@@ -708,13 +747,36 @@ test("changing Bigger Context retires ready automatic chats before a previous mo
   });
   vm.runInContext(electronMain.slice(electronMain.indexOf("function syncBrowserPreferences("), electronMain.indexOf("function registerIpc(")), context);
   const store = { read: () => state, update: patch => Object.assign(state, patch) };
-  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true });
+  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true, useTemporaryChats: false });
   assert.deepEqual(released, ["old-luna"]);
   assert.equal(state.experimentalBiggerContext, true);
   assert.equal(tabs.has("active"), true);
   assert.equal(tabs.has("manual"), true);
-  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true });
+  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true, useTemporaryChats: false });
   assert.deepEqual(released, ["old-luna"]);
+});
+
+test("changing chat mode retires idle automatic and manual conversations while preserving active tasks", () => {
+  const vm = require("node:vm");
+  const state = { useTemporaryChats: false };
+  const tabs = new Map([
+    ["automatic", { status: "ready", conversationKey: "automatic", interactionMode: "automatic" }],
+    ["manual", { status: "ready", conversationKey: "manual", interactionMode: "manual" }],
+    ["active", { status: "running", conversationKey: "active", interactionMode: "automatic" }],
+  ]);
+  const released = [];
+  const context = vm.createContext({
+    runtimeHost: { currentOperation: () => null }, browserHost: { turnTabs: tabs },
+    releaseRetainedConversation: (_host, key) => { released.push(key); tabs.delete(key); }, send() {},
+  });
+  vm.runInContext(electronMain.slice(electronMain.indexOf("function syncBrowserPreferences("), electronMain.indexOf("function registerIpc(")), context);
+  const store = { read: () => state, update: patch => Object.assign(state, patch) };
+  context.syncBrowserPreferences(store, { useTemporaryChats: true });
+  assert.deepEqual(released, ["automatic", "manual"]);
+  assert.equal(state.useTemporaryChats, true);
+  assert.equal(tabs.has("active"), true);
+  context.syncBrowserPreferences(store, { useTemporaryChats: true });
+  assert.deepEqual(released, ["automatic", "manual"]);
 });
 
 test("browser preference controls are translated, disabled in Zero Risk, and invoke their settings", async () => {
@@ -933,4 +995,61 @@ test("catalog recovery clears its error banner but preserves a newer unrelated f
   callback({ name: "setup", status: "failed", message: "Setup error" });
   callback({ name: "catalog-verification", status: "completed", message: "Loaded" });
   assert.equal(error, "Setup error");
+});
+
+
+test("Sleep and Wake controls follow runtime status and retain the current state after failure", async () => {
+  const ts = require("typescript"), vm = require("node:vm");
+  const values = [], effects = [], calls = [], errors = [], published = [];
+  let cursor = 0, sleeping = false, fail = false;
+  const context = {
+    element: (type, props, ...children) => ({ type, props: props ?? {}, children }), Fragment: "fragment",
+    useState: initial => {
+      const index = cursor++;
+      if (!(index in values)) values[index] = initial;
+      return [values[index], value => { values[index] = value; }];
+    },
+    useEffect: fn => effects.push(fn), platformLabel: String, messageOf: error => error.message,
+    api: { getSleepStatus: async () => ({ sleeping }),
+      setSleeping: async value => { calls.push(value); if (fail) throw new Error("route failed"); sleeping = value; return { sleeping }; },
+      snapshot: async () => ({ state: { codexRestartRequired: true } }),
+    },
+  };
+  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "SecondaryButton", "PrimaryButton", "Switch",
+    "InteractionModePicker", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "UpdatesSettings", "BrandMark"]) context[name] = name;
+  const source = appSource.slice(appSource.indexOf("function SettingsSurface("), appSource.indexOf("function ContentSurface("));
+  const options = { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, jsxFactory: "element", jsxFragmentFactory: "Fragment" };
+  vm.runInNewContext(ts.transpileModule(source, { compilerOptions: options }).outputText + "\nrender = SettingsSurface;", context);
+  const copy = { sleepTitle: "Sleep Fame Codex", sleep: "Sleep", wake: "Wake" };
+  const props = { copy, devProfile: false, language: "en", configureInteractionMode() {},
+    setError: error => errors.push(error), updateState: state => published.push(state),
+    snapshot: { profilePaths: { coreHome: "fixture", codexHome: "fixture", userData: "fixture" },
+      connectorNames: { automatic: "Fame Codex Native2" }, state: { coreSetupComplete: true, browserInteractionMode: "automatic" } },
+  };
+  const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
+    ? [tree, ...visit(tree.children)] : [];
+  const render = () => { cursor = 0; return visit(context.render(props)); };
+  const button = nodes => visit(nodes.find(node => node.type === "SettingRow" && node.props.label === copy.sleepTitle))
+    .find(node => node.type === "SecondaryButton");
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  assert.equal(button(render()).props.disabled, true);
+  effects[0]();
+  await flush();
+  assert.equal(button(render()).children[0], "Sleep");
+  button(render()).props.onClick();
+  await flush();
+  assert.equal(button(render()).children[0], "Wake");
+  button(render()).props.onClick();
+  await flush();
+  assert.equal(button(render()).children[0], "Sleep");
+  assert.deepEqual(calls, [true, false]);
+  assert.equal(published.length, 2);
+  fail = true;
+  button(render()).props.onClick();
+  await flush();
+  assert.equal(errors.at(-1), "route failed");
+  assert.equal(button(render()).children[0], "Sleep");
+  assert.equal(published.length, 2);
+  props.devProfile = true;
+  assert.equal(render().some(node => node.type === "SettingRow" && node.props.label === copy.sleepTitle), false);
 });

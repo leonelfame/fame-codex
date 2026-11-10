@@ -128,9 +128,11 @@ that option clicks **Allow once**, never a permanent grant.
 Use **Activity** for safe local diagnostics and **Settings → Run doctor** for end-to-end health.
 Use **Settings → Updates → Check for updates** to compare your installed version with published GitHub releases. Enable **Include Beta releases** to check prereleases too. **Download update** opens the installer in your browser; it does not close Fame Codex. Finish active Codex tasks before installing.
 Settings can also cancel a retained browser turn or remove the Codex integration before uninstall.
-**Save chats in ChatGPT** keeps task conversations in ChatGPT history. On by default for new setups;
-independent of **New browser chat for each turn**. Existing explicit choices are preserved when
-updating. Turn it off to use Temporary Chat, where ChatGPT may not expose your connector.
+**Temporary Chat** keeps new task conversations out of ChatGPT history and defaults on for new setups.
+It is independent of **New browser chat for each turn**. Existing **Save chats** preferences migrate
+to the equivalent Temporary Chat choice. Turn Temporary Chat off to keep ordinary saved conversations.
+**Settings → Sleep Fame Codex** temporarily restores your previous Codex route; **Wake** reconnects it.
+Restart Codex after changing Sleep or refreshing the model catalog.
 Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` only when every browser checkpoint needs a screenshot.
 
 New installs use **Compatibility V1** for cross-backend subagents. **Native** preserves Codex's own

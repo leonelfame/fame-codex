@@ -32,4 +32,31 @@ async function checkForUpdates({ currentVersion, includePrereleases, platform, a
   return { status: newer ? "available" : "up-to-date", latestVersion, releaseUrl, downloadUrl };
 }
 
-module.exports = { checkForUpdates };
+function createReleaseCheckController(options) {
+  let pending = null;
+  let release = null;
+  let failure = null;
+  return {
+    getRelease: () => release,
+    checkNow(includePrereleases) {
+      if (pending) return pending;
+      if (failure?.retryAt > Date.now()) return Promise.resolve(failure);
+      release = null;
+      pending = checkForUpdates({ ...options, includePrereleases }).then(result => {
+        failure = null;
+        release = result;
+        return result;
+      }).catch(error => {
+        const now = Date.now();
+        const retryAt = Number.isSafeInteger(error?.retryAt) && error.retryAt > now
+          && error.retryAt - now <= 24 * 60 * 60_000 ? error.retryAt : undefined;
+        failure = { status: "error", message: error instanceof Error ? error.message : String(error),
+          ...(retryAt ? { retryAt } : {}) };
+        return failure;
+      }).finally(() => { pending = null; });
+      return pending;
+    },
+  };
+}
+
+module.exports = { checkForUpdates, createReleaseCheckController };

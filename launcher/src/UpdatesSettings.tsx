@@ -1,11 +1,12 @@
-import { useState } from "react";
-import type { Language, LauncherApi, LauncherState, ReleaseCheckResult } from "./types";
+import { useEffect, useState } from "react";
+import type { Language, LauncherApi, LauncherState, ReleaseCheckError, ReleaseCheckResult } from "./types";
+import { copyFor } from "./i18n";
 import { updatesCopyFor } from "./updates-copy";
 
 type CheckState =
   | { status: "idle" | "checking" }
   | { status: "complete"; result: ReleaseCheckResult }
-  | { status: "error"; message: string };
+  | ReleaseCheckError;
 
 export function UpdatesSettings({ api, language, version, includeBeta, updateState }: {
   api: Pick<LauncherApi, "checkForUpdates" | "setPreference" | "openUpdateRelease">;
@@ -15,12 +16,25 @@ export function UpdatesSettings({ api, language, version, includeBeta, updateSta
   updateState: (state: LauncherState) => void;
 }) {
   const copy = updatesCopyFor(language);
+  const runtimeCopy = copyFor(language);
   const [check, setCheck] = useState<CheckState>({ status: "idle" });
   const [saving, setSaving] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const retryAt = check.status === "error" ? check.retryAt : undefined;
+  useEffect(() => {
+    setNow(Date.now());
+    if (!retryAt || retryAt <= Date.now()) return;
+    const timer = window.setTimeout(() => setNow(Date.now()), retryAt - Date.now());
+    return () => window.clearTimeout(timer);
+  }, [retryAt]);
   const busy = saving || check.status === "checking";
+  const coolingDown = retryAt !== undefined && retryAt > now;
   const checkNow = async () => {
     setCheck({ status: "checking" });
-    try { setCheck({ status: "complete", result: await api.checkForUpdates() }); }
+    try {
+      const result = await api.checkForUpdates();
+      setCheck(result.status === "error" ? result : { status: "complete", result });
+    }
     catch { setCheck({ status: "error", message: copy.failed }); }
   };
   const changeChannel = async (enabled: boolean) => {
@@ -38,7 +52,7 @@ export function UpdatesSettings({ api, language, version, includeBeta, updateSta
     <div className="section-heading is-spaced"><h2>{copy.title}</h2></div>
     <div className="setting-row">
       <div><strong>{copy.installed}</strong><p>v{version}</p></div>
-      <button className="button-secondary" disabled={busy} onClick={() => void checkNow()} type="button">
+      <button className="button-secondary" disabled={busy || coolingDown} onClick={() => void checkNow()} type="button">
         {check.status === "checking" ? copy.checking : copy.check}
       </button>
     </div>
@@ -48,6 +62,8 @@ export function UpdatesSettings({ api, language, version, includeBeta, updateSta
     </label>
     <div aria-live="polite" aria-atomic="true" className="updates-result">
       {check.status === "error" ? <p role="alert">{check.message}</p> : null}
+      {coolingDown ? <p>{runtimeCopy.updateRetryAfter.replace("{time}",
+        new Date(retryAt).toLocaleString(language))}</p> : null}
       {check.status === "complete" ? <>
         <p>{copy.latest}: <strong>v{check.result.latestVersion}</strong></p>
         <p>{check.result.status === "available" ? copy.available : copy.current}</p>

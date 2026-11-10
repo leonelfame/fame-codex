@@ -23,27 +23,62 @@ test("Beta update preference defaults off, persists, and rejects corrupt saved v
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("prediction setting starts on and remains off after reopening the state store", () => {
+test("predictions and Temporary Chat start on and preserve an explicit opt-out after reopening", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-prediction-state-"));
   const file = path.join(root, "state.json");
   try {
     const store = createStateStore(file);
     assert.equal(store.read().composerPredictionsEnabled, true);
-    store.update({ composerPredictionsEnabled: false });
+    assert.equal(store.read().useTemporaryChats, true);
+    store.update({ composerPredictionsEnabled: false, useTemporaryChats: false });
     assert.equal(createStateStore(file).read().composerPredictionsEnabled, false);
+    assert.equal(createStateStore(file).read().useTemporaryChats, false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("saved chats default on for new or missing settings and preserve an explicit opt-out", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-saved-chat-state-"));
+test("legacy saved-chat booleans migrate inversely while canonical values win", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fame-chat-preference-"));
   const file = path.join(root, "state.json");
   try {
-    assert.equal(createStateStore(file).read().useSavedChats, true);
-    fs.writeFileSync(file, JSON.stringify({ version: 1 }));
-    const store = createStateStore(file);
-    assert.equal(store.read().useSavedChats, true);
-    store.update({ useSavedChats: false });
-    assert.equal(createStateStore(file).read().useSavedChats, false);
+    for (const useSavedChats of [undefined, false, true, "retired-value"]) {
+      for (const useTemporaryChats of [undefined, false, true, "invalid"]) {
+        const stored = { version: 1, language: "ja", composerPredictionsEnabled: false,
+          experimentalFreshConversationPerTurn: true, autoStart: false, useSavedChats, useTemporaryChats };
+        fs.writeFileSync(file, JSON.stringify(stored));
+        const store = createStateStore(file);
+        const expected = typeof useTemporaryChats === "boolean" ? useTemporaryChats
+          : useTemporaryChats === undefined && typeof useSavedChats === "boolean" ? !useSavedChats : true;
+        assert.equal(store.read().useTemporaryChats, expected);
+        assert.equal(Object.hasOwn(store.read(), "useSavedChats"), false);
+        assert.equal(store.read().language, "ja");
+        assert.equal(store.read().composerPredictionsEnabled, false);
+        assert.equal(store.read().experimentalFreshConversationPerTurn, true);
+        assert.equal(store.read().autoStart, false);
+        assert.deepEqual(createStateStore(file).read(), store.read());
+        store.update({});
+        assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), store.read());
+      }
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("UTF-8 settings keep explicit choices with or without a byte order mark", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-utf8-state-"));
+  const file = path.join(root, "state.json");
+  try {
+    const expected = createStateStore(file).update({
+      coreSetupComplete: true,
+      autoStart: false,
+      useTemporaryChats: false,
+      browserInteractionMode: "manual",
+      browserSmokeVersion: "6.1.14\uFEFF-test",
+    });
+    for (const prefix of ["", "\uFEFF"]) {
+      const contents = prefix + JSON.stringify(expected);
+      fs.writeFileSync(file, contents);
+      assert.deepEqual(createStateStore(file).read(), expected);
+      assert.equal(fs.readFileSync(file, "utf8"), contents);
+    }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -67,7 +102,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       composerPredictionsEnabled: true,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useSavedChats: true,
+      useTemporaryChats: true,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,
@@ -98,7 +133,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       composerPredictionsEnabled: true,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useSavedChats: true,
+      useTemporaryChats: true,
       zeroRiskProEnabled: false,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
@@ -180,7 +215,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       composerPredictionsEnabled: true,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useSavedChats: true,
+      useTemporaryChats: true,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,

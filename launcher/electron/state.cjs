@@ -1,5 +1,6 @@
 const languages = require("./languages.json");
 const fs = require("node:fs");
+const { migrateChatPreference } = require("./chat-preference.cjs");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 420;
@@ -20,7 +21,7 @@ const DEFAULT_STATE = Object.freeze({
   composerPredictionsEnabled: true,
   experimentalSkillAttachments: false,
   experimentalFreshConversationPerTurn: false,
-  useSavedChats: true,
+  useTemporaryChats: true,
   zeroRiskProEnabled: false,
   browserSmokePassed: false,
   browserSmokeVersion: null,
@@ -37,9 +38,9 @@ function nextSessionRefreshReminderAt(now = Date.now()) {
 
 function readState(filePath) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, ""));
     if (!parsed || parsed.version !== 1) return { ...DEFAULT_STATE };
-    const state = { ...DEFAULT_STATE, ...parsed };
+    const state = { ...DEFAULT_STATE, ...migrateChatPreference(parsed) };
     delete state.bridgeEnabled;
     if (state.language !== null && (typeof state.language !== "string" || !Object.hasOwn(languages, state.language))) {
       state.language = DEFAULT_STATE.language;
@@ -56,7 +57,7 @@ function readState(filePath) {
       "composerPredictionsEnabled",
       "experimentalSkillAttachments",
       "experimentalFreshConversationPerTurn",
-      "useSavedChats",
+      "useTemporaryChats",
       "zeroRiskProEnabled",
       "browserSmokePassed",
       "sidebarOpen",
