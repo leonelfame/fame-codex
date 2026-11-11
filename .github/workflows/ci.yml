@@ -44,9 +44,9 @@ jobs:
         run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -GitHubEnv $env:GITHUB_ENV
       - name: Prepare compatible Linux libnotify
         if: runner.os == 'Linux'
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config libglib2.0-dev libgdk-pixbuf-2.0-dev binutils
+          sh ./scripts/prepare-linux-dependencies.sh
           ./scripts/prepare-linux-libnotify.sh
       - name: Prepare owned AppImage toolset
         if: runner.os == 'Linux'
