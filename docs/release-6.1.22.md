@@ -2,6 +2,7 @@
 
 - Accept the `text.verbosity` preference sent by Codex. TH AI Pass now expresses low, medium, or high verbosity as a final-answer instruction instead of rejecting the request before contacting the model.
 - Replace HTML-like tool-call delimiters with nonce-bound line markers. This avoids the extra closing angle bracket observed in live Gemini 3.5 Flash Lite tool responses. Tool names, arguments, nonce, and complete frames remain strictly validated before any call is exposed to Codex.
+- Preserve the original cancellation reason when a macOS passkey-login quit command is aborted, including cancellation while the command is running.
 
 Live validation with Codex and TH AI Pass Gemini 3.5 Flash Lite completed both an exact `TEST_OK` reply and a real read-only terminal command (`Get-Content package.json -TotalCount 1`), followed by the model's `READ_OK` response using the command result. This verifies one model and these flows; it does not guarantee every listed model or tool.
 

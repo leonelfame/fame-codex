@@ -252,6 +252,13 @@ test("passkey login ignores a Continue that arrives after the sign-in deadline",
   }
 });
 
+test("a cancelled login quit preserves its ownership reason before starting a command", async () => {
+  const ownership = new AbortController();
+  const reason = new Error("Chrome exited before quit");
+  ownership.abort(reason);
+  await expect(quitMacApplication(process.pid, process.execPath, ownership.signal)).rejects.toBe(reason);
+});
+
 test("macOS quit request stops retrying once ownership of the process ends", async () => {
   if (process.platform !== "darwin") return;
   const child = spawn("/bin/sleep", ["30"], { stdio: "ignore" });

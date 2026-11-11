@@ -112,8 +112,15 @@ app.isNil() ? (parentOf() === "${process.pid}" ? "missing" : "foreign")
   let result: string;
   for (;;) {
     signal.throwIfAborted();
-    const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", script],
-      { timeout: SYSTEM_LOGIN_STOP_TIMEOUT_MS, signal });
+    let stdout: string;
+    try {
+      ({ stdout } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", script],
+        { timeout: SYSTEM_LOGIN_STOP_TIMEOUT_MS, signal }));
+    } catch (error) {
+      signal.throwIfAborted();
+      throw error;
+    }
+    signal.throwIfAborted();
     result = stdout.trim();
     if (result !== "missing" || Date.now() >= deadline) break;
     await new Promise<void>((resolve, reject) => {
