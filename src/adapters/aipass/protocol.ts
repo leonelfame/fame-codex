@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import { z } from "zod";
+import { AIPASS_PROMPT_TOKEN_BUDGET } from "../../aipass-config";
+import { estimateTokens } from "../../lib/token-estimate";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "../../types";
 
 const objectArguments = z.record(z.string(), z.unknown());
@@ -105,6 +107,13 @@ export function prepareTurn(parsed: CodexParsedRequest) {
     JSON.stringify({ ...parsed.context, tools: tools.map(tool => ({ ...tool, wireName: namespacedToolName(tool.namespace, tool.name) })), options: promptOptions }),
     "END_CODEX_CONTEXT_JSON",
   ].join("\n");
+  const promptTokens = estimateTokens(prompt);
+  if (promptTokens > AIPASS_PROMPT_TOKEN_BUDGET) {
+    throw new AiPassError(
+      `TH AI Pass local prompt budget exceeded: approximately ${promptTokens} tokens, limit ${AIPASS_PROMPT_TOKEN_BUDGET}. Reduce enabled tools or shorten the session. Upstream model limits may be lower.`,
+      "aipass_prompt_budget_exceeded", 400,
+    );
+  }
 
   let buffer = "";
   let plain = false;

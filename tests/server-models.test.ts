@@ -1,4 +1,7 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defaultConfig } from "../src/config";
 import {
   CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE,
@@ -6,6 +9,19 @@ import {
   resolveChatGptWebContextLimits,
 } from "../src/chatgpt-web-models";
 import { modelsRequest } from "../src/server";
+
+let isolatedHome: string;
+let previousHome: string | undefined;
+beforeEach(() => {
+  previousHome = process.env.FAME_CODEX_HOME;
+  isolatedHome = mkdtempSync(join(tmpdir(), "server-models-"));
+  process.env.FAME_CODEX_HOME = isolatedHome;
+});
+afterEach(() => {
+  if (previousHome === undefined) delete process.env.FAME_CODEX_HOME;
+  else process.env.FAME_CODEX_HOME = previousHome;
+  rmSync(isolatedHome, { recursive: true, force: true });
+});
 
 test("catalog diagnostics preserve safe causes without attributing an upstream abort to the client", async () => {
   for (const [error, code] of [

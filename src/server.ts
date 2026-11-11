@@ -1047,6 +1047,25 @@ export function startServer(
         turnBroker?.setExternalOwnersAccepted(!draining);
         return Response.json({ status: "ok", accepting_turns: !draining, ...activity() });
       }
+      if (req.method === "POST" && url.pathname === "/admin/model-capabilities") {
+        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        const body: unknown = await readJsonRequestBody(req).catch(() => null);
+        if (!body || typeof body !== "object"
+          || !("solAvailable" in body) || typeof body.solAvailable !== "boolean"
+          || !("extraHighAvailable" in body) || typeof body.extraHighAvailable !== "boolean"
+          || !("proAvailable" in body) || typeof body.proAvailable !== "boolean"
+          || (!body.solAvailable && (body.extraHighAvailable || body.proAvailable))) {
+          return Response.json({ error: "Invalid model capabilities" }, { status: 400 });
+        }
+        const capabilities = {
+          solAvailable: body.solAvailable,
+          extraHighAvailable: body.extraHighAvailable,
+          proAvailable: body.proAvailable,
+        };
+        // Replace the configuration so requests already streaming retain their original snapshot.
+        config = { ...config, ...capabilities };
+        return Response.json({ status: "ok", capabilities });
+      }
       if (req.method === "POST" && url.pathname === "/admin/cancel-turn") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         let traceId: string;

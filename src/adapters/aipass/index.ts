@@ -92,7 +92,16 @@ export function createAiPassAdapter({ bridgeUrl, model }: { bridgeUrl: string; m
         for await (const data of sseData(response.body, signal)) {
           if (data === "[DONE]") { done = true; break; }
           const raw: unknown = JSON.parse(data);
-          if (raw && typeof raw === "object" && "error" in raw) throw new AiPassError("AI Pass bridge reported a streamed error", "aipass_upstream_error");
+          if (raw && typeof raw === "object" && "error" in raw) {
+            const failure = z.object({ error: z.object({ message: z.string() }) }).safeParse(raw);
+            // The bridge diagnostic may contain upstream originalText (the full private prompt).
+            const diagnostic = failure.success ? failure.data.error.message : "";
+            const status = diagnostic.match(/aipass returned (\d{3})\b/)?.[1];
+            const policy = diagnostic.includes('"code":"CHAT_RAI_VIOLATION"');
+            throw new AiPassError(policy
+              ? "TH AI Pass rejected the Codex context: Content Policy Violation (HTTP 422, CHAT_RAI_VIOLATION)."
+              : `AI Pass bridge reported a streamed error${status ? ` (upstream HTTP ${status})` : ""}.`, "aipass_upstream_error");
+          }
           const chunk = chunkSchema.parse(raw);
           if (finish) throw new AiPassError("Bridge sent output after a terminal finish reason");
           const choice = chunk.choices[0];

@@ -98,6 +98,8 @@ test("Bigger Context waits for startup and route recovery without invalidating h
     const context = vm.createContext({
       runtimeStartup, finishRuntimeStartup: () => { startupSettled = true; finishRuntimeStartup(); },
       startupAuthenticationRefresh, logger, stateStore, IS_DEV_PROFILE: false,
+      createModelRefresh: require("../electron/model-refresh.cjs").createModelRefresh,
+      runtimeSupervisor: {},
       SessionReminderView: class {}, mainWindow: {}, loadRenderer() {},
       createReleaseCheckController: require("../electron/release-check.cjs").createReleaseCheckController,
       app: { getVersion: () => "6.1.19" }, process,
@@ -801,7 +803,7 @@ test("browser preference controls are translated, disabled in Zero Risk, and inv
     },
     messageOf: String, platformLabel: String,
   };
-  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "InteractionModePicker", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "UpdatesSettings", "BrandMark"]) sandbox[name] = name;
+  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "InteractionModePicker", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "UpdatesSettings", "ModelsSettings", "BrandMark"]) sandbox[name] = name;
   vm.runInNewContext(transpile(settings, "settings.tsx") + "\nrender = SettingsSurface;", Object.assign(sandbox, { render }));
   render = sandbox.render;
   const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
@@ -948,7 +950,7 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
     useEffect() {}, messageOf: String, platformLabel: String,
     api: { setConnectorNameSuffix: async suffix => { submitted = suffix; return { mcpSetupComplete: false }; } },
   };
-  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "InteractionModePicker", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "UpdatesSettings", "BrandMark"]) sandbox[name] = name;
+  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "InteractionModePicker", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "UpdatesSettings", "ModelsSettings", "BrandMark"]) sandbox[name] = name;
   const settings = appSource.slice(appSource.indexOf("function SettingsSurface("), appSource.indexOf("function ContentSurface("));
   vm.runInNewContext(transpile(settings, "settings.tsx") + "\nrender = SettingsSurface;", sandbox);
   const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
@@ -1016,7 +1018,7 @@ test("Sleep and Wake controls follow runtime status and retain the current state
     },
   };
   for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "SecondaryButton", "PrimaryButton", "Switch",
-    "InteractionModePicker", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "UpdatesSettings", "BrandMark"]) context[name] = name;
+    "InteractionModePicker", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "UpdatesSettings", "ModelsSettings", "BrandMark"]) context[name] = name;
   const source = appSource.slice(appSource.indexOf("function SettingsSurface("), appSource.indexOf("function ContentSurface("));
   const options = { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, jsxFactory: "element", jsxFragmentFactory: "Fragment" };
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: options }).outputText + "\nrender = SettingsSurface;", context);

@@ -16,10 +16,6 @@ export async function aiPassResponseRequest(req: Request, raw: unknown): Promise
     if (!settings.models.some(row => row.id === model)) {
       return formatErrorResponse(400, "invalid_request_error", "Unknown TH AI Pass model. Refresh models with the extension connected.");
     }
-    // Bound the actual serialized input rather than silently trimming history.
-    if (JSON.stringify(expanded).length > settings.contextWindow * 3) {
-      return formatErrorResponse(400, "invalid_request_error", "TH AI Pass experimental prompt budget exceeded. Start a new session or use another model.");
-    }
     const adapter = createAiPassAdapter({ bridgeUrl: AIPASS_BRIDGE_URL, model });
     const queue = new AsyncEventQueue<AdapterEvent>();
     const abort = new AbortController();

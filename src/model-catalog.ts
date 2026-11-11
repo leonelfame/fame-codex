@@ -209,7 +209,7 @@ export function augmentNativeModelCatalog(
       ...structuredClone(template),
       slug: `${AIPASS_MODEL_PREFIX}${row.id}`,
       display_name: `TH AI Pass · ${row.name}`,
-      description: "Experimental browser bridge. Text only. Local 16K prompt budget; remote compaction unavailable.",
+      description: "Experimental browser bridge. Text only. Local 256K prompt budget; upstream limits may be lower. Remote compaction unavailable.",
       input_modalities: ["text"], visibility: "list", supported_in_api: true,
       multi_agent_version: "disabled", tool_mode: null, upgrade: null,
       default_reasoning_level: "medium",

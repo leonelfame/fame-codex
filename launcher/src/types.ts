@@ -156,7 +156,7 @@ export interface AiPassStatus {
   extensionConnected: boolean;
   models: { id: string; name: string }[];
   error: string | null;
-  contextWindow: 16384;
+  contextWindow: 262144;
 }
 
 export interface LauncherApi {
@@ -212,6 +212,7 @@ export interface LauncherApi {
   setAutoApproveToolCalls(enabled: boolean): Promise<LauncherState>;
   setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
   setTemporaryChats(enabled: boolean): Promise<LauncherState>;
+  refreshModels(): Promise<{ solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean }>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{
     state: LauncherState;

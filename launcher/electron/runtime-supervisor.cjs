@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const { migrateChatPreference } = require("./chat-preference.cjs");
+const { validateModelCapabilities } = require("./model-refresh.cjs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
@@ -1882,6 +1883,36 @@ class RuntimeSupervisor {
         : errorMessage(error);
       throw new Error(`Refusing to stop launcher-owned runtime because atomic idleness could not be proven: ${message}`);
     }
+  }
+
+  async refreshModelCapabilities(value) {
+    const capabilities = validateModelCapabilities(value);
+    const config = this.readConfig();
+    if (!config) throw new Error("Initialize Fame Codex before detecting models");
+    const previous = fs.readFileSync(this.configPath, "utf8");
+    const saved = JSON.parse(previous);
+    writePrivateFileAtomic(this.configPath, `${JSON.stringify({ ...saved, ...capabilities }, null, 2)}\n`);
+    try {
+      const result = await this.control(config, "model-capabilities", { body: capabilities });
+      const applied = validateModelCapabilities(result.capabilities);
+      if (result.status !== "ok" || Object.keys(capabilities).some(key => applied[key] !== capabilities[key])) {
+        throw new Error("Bridge did not acknowledge the detected models");
+      }
+    } catch (error) {
+      writePrivateFileAtomic(this.configPath, previous);
+      try {
+        await this.control(config, "model-capabilities", { body: {
+          solAvailable: config.solAvailable,
+          extraHighAvailable: config.extraHighAvailable === true,
+          proAvailable: config.proAvailable === true,
+        } });
+      } catch (rollbackError) {
+        this.logger.warn("runtime.model_refresh_rollback_failed", { message: errorMessage(rollbackError) });
+      }
+      throw new Error(`Could not refresh models in the running bridge; previous settings restored: ${errorMessage(error)}`);
+    }
+    this.logger.info("runtime.models_refreshed", capabilities);
+    return capabilities;
   }
 
   async cancelActiveTurns() {

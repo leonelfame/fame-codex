@@ -3,6 +3,8 @@ import { createAiPassAdapter } from "../src/adapters/aipass";
 import { buildResponseJSON } from "../src/bridge";
 import { parseRequest } from "../src/responses/parser";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "../src/types";
+import { prepareTurn } from "../src/adapters/aipass/protocol";
+import { AIPASS_PROMPT_TOKEN_BUDGET } from "../src/aipass-config";
 
 const servers: ReturnType<typeof Bun.serve>[] = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map(server => server.stop(true))); });
@@ -79,6 +81,35 @@ async function run(bridgeUrl: string, parsed = request(), signal?: AbortSignal) 
 function finalText(events: AdapterEvent[]) {
   return events.filter(event => event.type === "text_delta").map(event => event.text).join("");
 }
+
+test("a first Codex turn with hundreds of tools fits the local budget without trimming context", () => {
+  const parsed = request();
+  parsed.context.tools = Array.from({ length: 457 }, (_, index) => ({
+    name: `tool_${index}`, description: "Tool documentation with parameters and examples. ".repeat(30),
+    parameters: { type: "object", properties: { input: { type: "string" } } },
+  }));
+  parsed.context.systemPrompt = ["Preserve these developer instructions."];
+  const turn = prepareTurn(parsed);
+  expect(turn.prompt.length).toBeGreaterThan(16384 * 3);
+  expect(turn.prompt).toContain('"name":"tool_456"');
+  expect(turn.prompt).toContain("Preserve these developer instructions.");
+  expect(turn.prompt).toContain("last question");
+});
+
+test("the budget counts tokens in the outbound prompt and rejects oversized context explicitly", () => {
+  const parsed = request();
+  parsed._rawBody = { metadata: { unrelated: "x".repeat(100_000) } };
+  expect(prepareTurn(parsed).prompt).not.toContain("unrelated");
+  parsed.context.messages = [{ role: "user", content: "word ".repeat(AIPASS_PROMPT_TOKEN_BUDGET + 100), timestamp: 1 }];
+  expect(() => prepareTurn(parsed)).toThrow("Reduce enabled tools or shorten the session");
+});
+
+test("upstream policy errors identify the refusal without exposing the echoed private prompt", async () => {
+  const f = fixture({ chat: () => stream(`data: ${JSON.stringify({ error: { message: 'aipass returned 422 — {"code":"CHAT_RAI_VIOLATION","originalText":"PRIVATE_PROMPT"}' } })}\n\ndata: [DONE]\n\n`) });
+  const events = await run(f.bridgeUrl);
+  expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "aipass_upstream_error", message: expect.stringContaining("CHAT_RAI_VIOLATION") }));
+  expect(JSON.stringify(events)).not.toContain("PRIVATE_PROMPT");
+});
 
 test("serializes the entire context into one user prompt, uses isolated turns and never forwards auth or fabricates usage", async () => {
   const f = fixture();

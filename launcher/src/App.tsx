@@ -13,6 +13,7 @@ import { Icon, type IconName } from "./icons";
 import { LimitsSurface } from "./LimitsSurface";
 import { AiPassSettings } from "./AiPassSettings";
 import { UpdatesSettings } from "./UpdatesSettings";
+import { ModelsSettings } from "./ModelsSettings";
 import { limitsCopyFor } from "./limits-copy";
 import { useLimits } from "./useLimits";
 import { describeTurnActivity } from "./turn-activity";
@@ -1904,6 +1905,8 @@ function SettingsSurface({
     <ContentSurface narrow title={devProfile ? copy.devSettingsTitle : copy.settingsTitle}>
       {api?.getAiPassStatus ? <AiPassSettings api={api} language={language} /> : null}
       <UpdatesSettings api={api!} includeBeta={snapshot.state.includePrereleaseUpdates} language={language} updateState={updateState} version={snapshot.version} />
+      {!devProfile ? <ModelsSettings api={api!} enabled={snapshot.state.coreSetupComplete === true && !busy}
+        automatic={snapshot.state.browserInteractionMode === "automatic"} /> : null}
       <SectionHeading label={copy.general} spaced />
       <div className="settings-list">
         {!devProfile && snapshot.state.coreSetupComplete ? (

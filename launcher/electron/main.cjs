@@ -20,6 +20,7 @@ const {
   Tray,
 } = require("electron");
 const { BrowserHost, navigationErrorForLog } = require("./browser-host.cjs");
+const { createModelRefresh } = require("./model-refresh.cjs");
 const { SessionReminderView } = require("./session-reminder-view.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
 const { AiPassController } = require("./aipass-controller.cjs");
@@ -118,15 +119,16 @@ const AIPASS_ROOT = app.isPackaged
   ? path.join(process.resourcesPath, "aipass")
   : path.join(__dirname, "..", "assets", "aipass");
 const AIPASS_CONFIG_PATH = path.join(CORE_HOME, "aipass.json");
+const AIPASS_PROMPT_TOKEN_BUDGET = 262144;
 
 function readAiPassConfig() {
   let value;
   try { value = JSON.parse(fs.readFileSync(AIPASS_CONFIG_PATH, "utf8")); }
   catch (error) {
-    if (error.code === "ENOENT") return { version: 1, enabled: false, models: [], contextWindow: 16384 };
+    if (error.code === "ENOENT") return { version: 1, enabled: false, models: [], contextWindow: AIPASS_PROMPT_TOKEN_BUDGET };
     throw error;
   }
-  if (value?.version !== 1 || typeof value.enabled !== "boolean" || value.contextWindow !== 16384
+  if (value?.version !== 1 || typeof value.enabled !== "boolean" || ![16384, AIPASS_PROMPT_TOKEN_BUDGET].includes(value.contextWindow)
     || !Array.isArray(value.models) || value.models.length > 256
     || value.models.some(model => !model || typeof model.id !== "string" || !model.id.trim()
       || model.id.length > 256 || /[\x00-\x1f\x7f]/.test(model.id)
@@ -134,7 +136,7 @@ function readAiPassConfig() {
     throw new Error("Invalid TH AI Pass settings in aipass.json");
   }
   return { version: 1, enabled: value.enabled,
-    models: value.models.map(({ id, name }) => ({ id, name })), contextWindow: 16384 };
+    models: value.models.map(({ id, name }) => ({ id, name })), contextWindow: AIPASS_PROMPT_TOKEN_BUDGET };
 }
 
 function writeAiPassConfig(config) {
@@ -159,7 +161,7 @@ function aiPassSnapshot() {
   return { ...(aiPassController?.snapshot() ?? {
     status: config.enabled ? "stopped" : "disabled", port: 17843,
     extensionConnected: false, models: [], error: null,
-  }), enabled: config.enabled, contextWindow: 16384 };
+  }), enabled: config.enabled, contextWindow: config.contextWindow };
 }
 
 async function updateAiPass(enabled) {
@@ -641,7 +643,7 @@ function registerIpc({ logger, stateStore }) {
   const runtimeChannels = new Set([
     "launcher:setup-core", "launcher:setup-mcp", "launcher:uninstall-integration",
     "launcher:sleep", "launcher:sleep-status",
-    "launcher:composer-predictions", "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn", "launcher:temporary-chats",
+    "launcher:composer-predictions", "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn", "launcher:temporary-chats", "launcher:refresh-models",
     "launcher:zero-risk-pro", "launcher:browser-interaction-mode",
     "launcher:auto-approve-tool-calls",
     "launcher:connector-name", "launcher:mcp-verify", "launcher:doctor", "launcher:cancel-turns",
@@ -1037,6 +1039,8 @@ function registerIpc({ logger, stateStore }) {
       ...autostart,
     };
   });
+  const refreshModels = createModelRefresh({ browserHost, runtimeHost, supervisor: runtimeSupervisor });
+  handle("launcher:refresh-models", () => refreshModels());
   handle("launcher:bigger-context", async (_event, enabled) => {
     const result = await runtimeHost.setBiggerContext(enabled === true);
     syncBrowserPreferences(stateStore, runtimeHost.runtimeConfigSnapshot().config);
