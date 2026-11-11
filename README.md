@@ -20,7 +20,7 @@
 
 Fame Codex is a desktop app maintained by [Leonelfame](https://github.com/leonelfame). It connects your signed-in ChatGPT browser session to Codex through MCP, so Codex can edit project files and run commands with the tools and approvals for the current task.
 
-The launcher uses a blue Terminal/TUI interface and an 8-bit F icon. Setup, the embedded ChatGPT browser, MCP, Activity, and Settings stay in one window. A separate DEV profile lets you test changes without replacing your normal account session.
+Setup, the embedded ChatGPT browser, MCP, Activity, and Settings stay in one window. A separate DEV profile lets you test changes without replacing your normal account session.
 
 Choose a Fame Codex model ending in **(Web)** from Codex's model picker. Available models and usage limits depend on your ChatGPT account.
 
@@ -43,7 +43,43 @@ Open [Releases](https://github.com/leonelfame/fame-codex/releases) and download 
 3. **Install models** and restart Codex once. In automatic mode, choose a model ending in **(Web)**. Pro versions have separate entries; Sol reasoning is selected through Effort. Zero Risk keeps its dedicated entry.
 4. **For coding with tools**, open **MCP** in the launcher and complete the Full harness setup below.
 
-The app includes its browser and runtime. No separate Chrome, Node, or Bun installation is needed.
+The app includes its browser and runtime for ChatGPT. No separate Chrome, Node, or Bun installation is needed for that path. The optional TH AI Pass integration requires Chrome or Edge with the bundled browser extension.
+
+## TH AI Pass (Experimental)
+
+TH AI Pass connects models available in your signed-in TH AI Pass account to Codex through a browser extension and a local bridge. It is disabled by default.
+
+### Setup
+
+1. Open **Settings → TH AI Pass** in the Fame Codex launcher and enable **TH AI Pass**.
+2. Click **Open extension folder**.
+3. Open the extensions manager in Chrome or Edge and enable **Developer mode**. Choose **Load unpacked** and select the folder opened by the launcher, containing `manifest.json`.
+4. Click **Open TH AI Pass**, sign in to `de.aipass.net` in the browser where you installed the extension, and open its chat page. Keep that tab open while using Codex.
+5. Return to the launcher and click **Refresh models**. Confirm that the status reads **Extension connected** and the model list is populated.
+6. Restart Codex and choose an available model with an ID beginning with `aipass/`.
+
+If the extension is already installed, enable the integration, open your signed-in TH AI Pass chat tab, and refresh models. The launcher starts the bundled bridge automatically; no separate bridge server installation is required.
+
+### Usage and limits
+
+- Keep Fame Codex, the browser extension, and the signed-in TH AI Pass chat tab running during requests.
+- Model availability and usage allowances depend on your TH AI Pass account. The launcher lists eligible chat/text models returned by the connected extension.
+- The local prompt budget is **262,144 tokens**, including serialized conversation history and tool definitions. This is a transport limit; individual upstream models may accept less context.
+- Long sessions or large tool catalogs may exceed the prompt budget. Shorten the session or reduce enabled tools if this happens.
+- This integration is experimental and uses a separate browser-extension transport from the ChatGPT MCP harness described below.
+- Requests are processed through TH AI Pass using your signed-in account. Use it only for content you are authorized to send to that service.
+
+### Troubleshooting
+
+| Status or problem | What to do |
+| --- | --- |
+| **Waiting for extension** | Check that the extension is enabled in the browser you are using, then reload the TH AI Pass chat tab and click **Refresh models**. |
+| **Extension connected**, but no models | Confirm you are signed in and the chat page has loaded, then refresh models again. |
+| Models missing from Codex | Confirm the launcher has a populated model list, then restart Codex. |
+| `port_unavailable` | Another process is using local port **17843**. Close the conflicting process if appropriate, then disable and re-enable TH AI Pass. Fame Codex leaves other processes running. |
+| Prompt budget exceeded | Shorten the conversation or reduce enabled tools, then retry. |
+
+To stop using the integration, disable **Settings → TH AI Pass** and restart Codex to refresh its model list.
 
 <details>
 <summary><strong>Terminal install, updates & repair</strong></summary>
