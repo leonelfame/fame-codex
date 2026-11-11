@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-function setup() {
+function setup(tabs = []) {
   let listener;
   const calls = [];
   const timers = [];
@@ -13,7 +13,7 @@ function setup() {
     runtime: { onMessage: { addListener(fn) { listener = fn; } }, onConnect: event(), onStartup: event(), onInstalled: event() },
     alarms: { create() {}, onAlarm: event() },
     storage: { local: { get: async () => ({}) } },
-    tabs: { query: async () => [] },
+    tabs: { query: async () => tabs },
   };
   const fetch = (url, options) => {
     if (url.endsWith('/ext/events')) return new Promise(() => {});
@@ -24,9 +24,18 @@ function setup() {
   };
   const context = { chrome, fetch, URL, AbortController, TextDecoder, setTimeout: (fn, ms) => { const timer = { fn, ms }; timers.push(timer); return timer; }, clearTimeout: () => {}, console };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../assets/aipass/extension/background.js'), 'utf8'), context);
-  return { calls, timers, send: (payload) => listener({ type: 'from-page', payload }, {}, () => {}) };
+  return { calls, timers, pickTab: () => context.findChatTab(), send: (payload) => listener({ type: 'from-page', payload }, {}, () => {}) };
 }
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test('model jobs follow the active or most recently used live chat instead of the oldest tab', async () => {
+  const old = { id: 1, url: 'https://de.aipass.net/chat/old', lastAccessed: 1 };
+  const recent = { id: 2, url: 'https://de.aipass.net/chat', lastAccessed: 10 };
+  assert.equal((await setup([old, recent]).pickTab()).id, 2);
+  assert.equal((await setup([{ ...old, active: true }, recent]).pickTab()).id, 1);
+  assert.equal((await setup([old, { ...recent, discarded: true }]).pickTab()).id, 1);
+  assert.equal(await setup().pickTab(), null);
+});
 
 test('delivers each job in order while other jobs proceed', async () => {
   const { calls, send } = setup();

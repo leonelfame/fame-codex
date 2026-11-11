@@ -56,6 +56,31 @@
 
   const reply = (msg) => window.postMessage({ [TAG]: 'res', ...msg }, window.location.origin);
 
+  // Turbo-stream sends the complete flat pool as a newline-delimited JSON record.
+  // Its HTTP connection may remain open after that record has arrived.
+  async function readLoaderRecord(res) {
+    if (!res.body) throw new Error('loader response has no body');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        if (pending.length > 16 * 1024 * 1024) throw new Error('loader response is too large');
+        const newline = pending.indexOf('\n');
+        if (newline !== -1 || done) {
+          const record = (newline === -1 ? pending : pending.slice(0, newline)).trim();
+          if (!Array.isArray(JSON.parse(record))) throw new Error('loader response is not a flat JSON pool');
+          return record;
+        }
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  }
+
   // Read-only GET against one of the app's own loaders. Confined to /loaders/
   // so a compromised bridge cannot turn this into a general request forwarder.
   async function runLoader(job) {
@@ -65,7 +90,7 @@
       }
       const res = await fetch(job.url, { credentials: 'include', headers: { accept: '*/*' } });
       if (!res.ok) throw new Error(`aipass returned ${res.status} ${res.statusText}`);
-      reply({ jobId: job.jobId, kind: 'loader', raw: await res.text() });
+      reply({ jobId: job.jobId, kind: 'loader', raw: await readLoaderRecord(res) });
     } catch (err) {
       reply({ jobId: job.jobId, kind: 'loader', message: String(err?.message ?? err) });
     }
@@ -98,7 +123,7 @@
         body: params.toString(),
       });
       if (!res.ok) throw new Error(`aipass returned ${res.status} ${res.statusText}`);
-      reply({ jobId: job.jobId, kind: 'loader', raw: await res.text() });
+      reply({ jobId: job.jobId, kind: 'loader', raw: await readLoaderRecord(res) });
     } catch (err) {
       reply({ jobId: job.jobId, kind: 'loader', message: String(err?.message ?? err) });
     }

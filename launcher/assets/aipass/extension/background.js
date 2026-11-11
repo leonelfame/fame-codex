@@ -120,8 +120,11 @@ async function findChatTab() {
   if (!tabs.length) return null;
   const live = tabs.filter((t) => !t.discarded && t.status !== 'unloaded');
   const pool = live.length ? live : tabs;
-  // Prefer a tab already sitting on a chat route.
-  return pool.find((t) => t.url?.includes('/chat')) ?? pool[0];
+  const chats = pool.filter((t) => t.url?.includes('/chat'));
+  const candidates = chats.length ? chats : pool;
+  // An old retained tab may no longer execute scripts. Follow the user's latest chat.
+  return candidates.sort((a, b) => Number(!!b.active) - Number(!!a.active)
+    || (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0];
 }
 
 function waitForComplete(tabId, timeoutMs = 15_000) {
