@@ -46,7 +46,7 @@ export function prepareTurn(parsed: CodexParsedRequest) {
   if (parsed.previousResponseId && !parsed._replayPrefixLen) unsupported("AI Pass requires expanded previous_response_id history");
   rejectOpaque(parsed._rawBody);
   for (const [key, value] of Object.entries(parsed.options)) {
-    if (value !== undefined && !["toolChoice", "parallelToolCalls", "hideThinkingSummary", "reasoning", "promptCacheKey"].includes(key)) {
+    if (value !== undefined && !["toolChoice", "parallelToolCalls", "hideThinkingSummary", "reasoning", "promptCacheKey", "verbosity"].includes(key)) {
       unsupported(`AI Pass cannot faithfully apply option ${key}`);
     }
   }
@@ -91,14 +91,22 @@ export function prepareTurn(parsed: CodexParsedRequest) {
     }
   }));
   const nonce = randomUUID();
-  const open = `<aipass-tools:${nonce}>`;
-  const close = `</aipass-tools:${nonce}>`;
+  const open = `AIPASS_TOOLS_${nonce}`;
+  const close = `END_AIPASS_TOOLS_${nonce}`;
   const { reasoning: _reasoning, promptCacheKey: _promptCacheKey, ...promptOptions } = parsed.options;
   const prompt = [
     "EXPERIMENTAL CODEX WEB WRAPPER. The JSON below is the complete ordered Codex context, not just its latest message.",
     "Apply systemPrompt and developer instructions, preserve conversation roles, and use toolResult entries as results of earlier calls.",
     "Return an ordinary final answer as plain text. Do not wrap normal answers in JSON or a tool frame.",
-    `To request tools, return ONLY ${open}{"calls":[{"name":"EXACT_WIRE_NAME","arguments":{}}]}${close}.`,
+    ...(parsed.options.verbosity ? [{
+      low: "Keep the final answer concise and direct while satisfying every explicit requirement.",
+      medium: "Use balanced detail in the final answer.",
+      high: "Use thorough detail in the final answer when it improves completeness or precision.",
+    }[parsed.options.verbosity]] : []),
+    "To request tools, return ONLY the following three lines, with the exact markers and no Markdown:",
+    open,
+    '{"calls":[{"name":"EXACT_WIRE_NAME","arguments":{}}]}',
+    close,
     "arguments must be a JSON object (or a string encoding a JSON object) satisfying the supplied tool parameters.",
     'For freeform tools use arguments:{"input":"exact unmodified freeform input"}. For toolSearch use its supplied JSON argument schema.',
     "Calls are requests for outer Codex to execute. Never pretend to execute them or fabricate their results.",
@@ -127,7 +135,7 @@ export function prepareTurn(parsed: CodexParsedRequest) {
       buffer += text;
       const start = buffer.trimStart();
       if (!open.startsWith(start) && !start.startsWith(open)) {
-        if (start.startsWith("<aipass-tools:")) throw new AiPassError("Wrong tool frame nonce");
+        if (start.startsWith("AIPASS_TOOLS_")) throw new AiPassError("Wrong tool frame nonce");
         if (!required) {
           plain = true;
           textEvents(buffer, emit);
@@ -159,7 +167,7 @@ export function prepareTurn(parsed: CodexParsedRequest) {
         return;
       }
       if (required) throw new AiPassError("Required tool call was not returned");
-      if (text && (open.startsWith(text) || text.startsWith("<aipass-tools:"))) throw new AiPassError("Incomplete tool frame");
+      if (text && (open.startsWith(text) || text.startsWith("AIPASS_TOOLS_"))) throw new AiPassError("Incomplete tool frame");
       textEvents(buffer, emit);
       if (reason === "length") emit({ type: "incomplete", reason: "max_output_tokens", retryable: false, endTurn: true });
       else emit({ type: "done", stopReason: "stop", endTurn: true });

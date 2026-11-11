@@ -24,9 +24,9 @@ function promptFrom(body: unknown): string {
   return row.content;
 }
 function frame(body: unknown, calls: unknown[]): string {
-  const match = promptFrom(body).match(/<aipass-tools:([a-f0-9-]+)>/);
+  const match = promptFrom(body).match(/AIPASS_TOOLS_([a-f0-9-]+)/);
   if (!match) throw new Error("Missing nonce");
-  return `<aipass-tools:${match[1]}>${JSON.stringify({ calls })}</aipass-tools:${match[1]}>`;
+  return `AIPASS_TOOLS_${match[1]}\n${JSON.stringify({ calls })}\nEND_AIPASS_TOOLS_${match[1]}`;
 }
 function chunks(text: string, finish = "stop"): string {
   return [
@@ -223,7 +223,8 @@ test("enforces none, named, allowed/required toolChoice and disabled parallel ca
 test("rejects malformed, truncated or wrong-nonce tool frames without executing partial calls", async () => {
   for (const output of [
     (body: unknown) => frame(body, [{ name: "read", arguments: {} }]).slice(0, -5),
-    () => '<aipass-tools:wrong>{"calls":[]}</aipass-tools:wrong>',
+    (body: unknown) => frame(body, [{ name: "read", arguments: {} }]).replace("\nEND_AIPASS_TOOLS_", ">\nEND_AIPASS_TOOLS_"),
+    () => 'AIPASS_TOOLS_wrong\n{"calls":[]}\nEND_AIPASS_TOOLS_wrong',
     (body: unknown) => frame(body, []).replace('{"calls":[]}', "{broken}"),
   ]) {
     const f = fixture({ chat: body => stream(chunks(output(body))) });
@@ -243,6 +244,26 @@ test("accepts Codex reasoning effort and cache keys without sending them to the 
   expect(prompt).not.toContain("private-cache-key");
   const encoded = prompt.split("BEGIN_CODEX_CONTEXT_JSON\n")[1]?.split("\nEND_CODEX_CONTEXT_JSON")[0];
   expect(JSON.parse(encoded ?? "null").options).toEqual({ hideThinkingSummary: true });
+});
+
+test("Codex text verbosity becomes a final-answer preference without blocking chat or tool calls", async () => {
+  for (const verbosity of ["low", "medium", "high"] as const) {
+    for (const toolCall of [false, true]) {
+      const f = fixture({ chat: body => {
+        expect(promptFrom(body)).toContain(`"verbosity":"${verbosity}"`);
+        expect(promptFrom(body)).toContain({ low: "concise and direct", medium: "balanced detail", high: "thorough detail" }[verbosity]);
+        return stream(chunks(toolCall ? frame(body, [{ name: "read", arguments: { path: "README.md" } }]) : "TEST_OK"));
+      } });
+      const parsed = parseRequest({ model: "aipass/fixture", input: "hello", stream: true,
+        text: { verbosity }, tools: [{ type: "function", name: "read", parameters: {
+          type: "object", properties: { path: { type: "string" } }, required: ["path"],
+        } }] });
+      const events = await run(f.bridgeUrl, parsed);
+      expect(events.at(-1)).toMatchObject({ type: "done", stopReason: toolCall ? "tool_use" : "stop" });
+      if (toolCall) expect(events).toContainEqual(expect.objectContaining({ type: "tool_call_start", name: "read" }));
+      else expect(finalText(events)).toBe("TEST_OK");
+    }
+  }
 });
 
 test("rejects unsupported capabilities before any network request", async () => {
