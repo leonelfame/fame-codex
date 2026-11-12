@@ -119,7 +119,8 @@ async function findChatTab() {
   const tabs = await chrome.tabs.query({ url: ['https://*.aipass.net/*', 'https://aipass.net/*'] });
   if (!tabs.length) return null;
   const live = tabs.filter((t) => !t.discarded && t.status !== 'unloaded');
-  const pool = live.length ? live : tabs;
+  const unfrozen = live.filter((t) => !t.frozen);
+  const pool = unfrozen.length ? unfrozen : live.length ? live : tabs;
   const chats = pool.filter((t) => t.url?.includes('/chat'));
   const candidates = chats.length ? chats : pool;
   // An old retained tab may no longer execute scripts. Follow the user's latest chat.
@@ -161,6 +162,10 @@ async function handleJob(job) {
   const tab = await findChatTab();
   if (!tab) {
     await postJob('/ext/error', { jobId: job.jobId, message: 'no de.aipass.net tab is open' });
+    return;
+  }
+  if (tab.frozen) {
+    await postJob('/ext/error', { jobId: job.jobId, message: 'TH AI Pass tab is sleeping; activate the tab and try again' });
     return;
   }
   jobTabs.set(job.jobId, tab.id);

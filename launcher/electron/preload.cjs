@@ -59,6 +59,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   setTemporaryChats: (enabled) => ipcRenderer.invoke("launcher:temporary-chats", enabled),
   refreshModels: () => ipcRenderer.invoke("launcher:refresh-models"),
   setAutoApproveToolCalls: (enabled) => ipcRenderer.invoke("launcher:auto-approve-tool-calls", enabled),
+  selectTrustedCodexHome: () => ipcRenderer.invoke("launcher:trusted-codex-home-select"),
+  clearTrustedCodexHomes: () => ipcRenderer.invoke("launcher:trusted-codex-homes-clear"),
   setZeroRiskPro: (enabled) => ipcRenderer.invoke("launcher:zero-risk-pro", enabled),
   setBrowserInteractionMode: (mode) => ipcRenderer.invoke("launcher:browser-interaction-mode", mode),
   setPreference: (key, value) => ipcRenderer.invoke("launcher:set-preference", key, value),

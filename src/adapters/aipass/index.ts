@@ -64,7 +64,7 @@ export function createAiPassAdapter({ bridgeUrl, model }: { bridgeUrl: string; m
       const signal = incoming.abortSignal ?? new AbortController().signal;
       const heartbeat = setInterval(() => emit({ type: "heartbeat" }), 10_000);
       try {
-        const turn = prepareTurn(parsed);
+        let turn = prepareTurn(parsed);
         const request = async (path: string, body?: unknown) => {
           signal.throwIfAborted();
           const response = await fetch(`${origin}${path}`, {
@@ -75,44 +75,69 @@ export function createAiPassAdapter({ bridgeUrl, model }: { bridgeUrl: string; m
             redirect: "error",
           });
           if (!response.ok) {
-            await response.body?.cancel();
-            throw new AiPassError(`AI Pass bridge ${path} returned HTTP ${response.status}`, "aipass_bridge_http_error", response.status);
+            // Only report known diagnostics: upstream errors can echo private prompts.
+            let diagnostic = "";
+            try {
+              const body: unknown = await response.json();
+              const failure = z.object({ error: z.object({ message: z.string() }) }).safeParse(body);
+              if (failure.success) diagnostic = failure.data.error.message;
+            } catch { /* keep the HTTP status if the body is not JSON */ }
+            const detail = /timed out waiting for the extension/i.test(diagnostic)
+              ? ": timed out waiting for the browser extension; check the signed-in TH AI Pass tab"
+              : /no extension connected/i.test(diagnostic)
+                ? ": browser extension is not connected"
+                : /TH AI Pass tab is sleeping/i.test(diagnostic)
+                  ? ": TH AI Pass tab is sleeping; activate it and try again"
+                : "";
+            throw new AiPassError(`AI Pass bridge ${path} returned HTTP ${response.status}${detail}`, "aipass_bridge_http_error", response.status);
           }
           return response;
         };
         const health = healthSchema.safeParse(await (await request("/health")).json());
         if (!health.success) throw new AiPassError("Bridge does not support isolated temporary turns", "aipass_bridge_isolation_unproven", 503);
-        const response = await request("/v1/chat/isolated", { model, stream: true, messages: [{ role: "user", content: turn.prompt }] });
-        if (!response.headers.get("content-type")?.startsWith("text/event-stream") || !response.body) {
-          await response.body?.cancel();
-          throw new AiPassError("Bridge did not return an SSE stream");
-        }
-        let finish: "stop" | "length" | undefined;
-        let done = false;
-        for await (const data of sseData(response.body, signal)) {
-          if (data === "[DONE]") { done = true; break; }
-          const raw: unknown = JSON.parse(data);
-          if (raw && typeof raw === "object" && "error" in raw) {
-            const failure = z.object({ error: z.object({ message: z.string() }) }).safeParse(raw);
-            // The bridge diagnostic may contain upstream originalText (the full private prompt).
-            const diagnostic = failure.success ? failure.data.error.message : "";
-            const status = diagnostic.match(/aipass returned (\d{3})\b/)?.[1];
-            const policy = diagnostic.includes('"code":"CHAT_RAI_VIOLATION"');
-            throw new AiPassError(policy
-              ? "TH AI Pass rejected the Codex context: Content Policy Violation (HTTP 422, CHAT_RAI_VIOLATION)."
-              : `AI Pass bridge reported a streamed error${status ? ` (upstream HTTP ${status})` : ""}.`, "aipass_upstream_error");
+        for (let attempt = 0; ; attempt++) {
+          if (attempt) turn = prepareTurn(parsed);
+          const retryInstruction = attempt ? "\nYour previous tool frame was rejected before execution. Return valid JSON using the exact markers. When parallel calls are disabled, provide exactly one call. Do not assume any tool ran." : "";
+          const response = await request("/v1/chat/isolated", { model, stream: true, messages: [{ role: "user", content: turn.prompt + retryInstruction }] });
+          if (!response.headers.get("content-type")?.startsWith("text/event-stream") || !response.body) {
+            await response.body?.cancel();
+            throw new AiPassError("Bridge did not return an SSE stream");
           }
-          const chunk = chunkSchema.parse(raw);
-          if (finish) throw new AiPassError("Bridge sent output after a terminal finish reason");
-          const choice = chunk.choices[0];
-          if (choice.delta.reasoning_content && !parsed.options.hideThinkingSummary) emit({ type: "thinking_delta", thinking: choice.delta.reasoning_content });
-          if (choice.delta.content) turn.push(choice.delta.content, emit);
-          if (choice.finish_reason) finish = choice.finish_reason;
+          let finish: "stop" | "length" | undefined;
+          let done = false;
+          for await (const data of sseData(response.body, signal)) {
+            if (data === "[DONE]") { done = true; break; }
+            let raw: unknown;
+            try { raw = JSON.parse(data); }
+            catch { throw new AiPassError("AI Pass bridge returned invalid stream JSON"); }
+            if (raw && typeof raw === "object" && "error" in raw) {
+              const failure = z.object({ error: z.object({ message: z.string() }) }).safeParse(raw);
+              // The bridge diagnostic may contain upstream originalText (the full private prompt).
+              const diagnostic = failure.success ? failure.data.error.message : "";
+              const status = diagnostic.match(/aipass returned (\d{3})\b/)?.[1];
+              const policy = diagnostic.includes('"code":"CHAT_RAI_VIOLATION"');
+              throw new AiPassError(policy
+                ? "TH AI Pass rejected the Codex context: Content Policy Violation (HTTP 422, CHAT_RAI_VIOLATION)."
+                : `AI Pass bridge reported a streamed error${status ? ` (upstream HTTP ${status})` : ""}.`, "aipass_upstream_error");
+            }
+            const chunk = chunkSchema.parse(raw);
+            if (finish) throw new AiPassError("Bridge sent output after a terminal finish reason");
+            const choice = chunk.choices[0];
+            if (choice.delta.reasoning_content && !parsed.options.hideThinkingSummary) emit({ type: "thinking_delta", thinking: choice.delta.reasoning_content });
+            if (choice.delta.content) turn.push(choice.delta.content, emit);
+            if (choice.finish_reason) finish = choice.finish_reason;
+          }
+          signal.throwIfAborted();
+          if (!done || !finish) throw new AiPassError("Bridge stream ended without finish_reason and [DONE]");
+          // Never trust reference usage estimates; stream events intentionally carry no usage.
+          try {
+            turn.finish(finish, emit);
+            break;
+          } catch (error) {
+            if (attempt >= 2 || !(error instanceof AiPassError)
+              || !["AI Pass model returned invalid tool frame JSON", "AI Pass model returned invalid tool arguments JSON", "Parallel tool calls were disabled"].includes(error.message)) throw error;
+          }
         }
-        signal.throwIfAborted();
-        if (!done || !finish) throw new AiPassError("Bridge stream ended without finish_reason and [DONE]");
-        // Never trust reference usage estimates; stream events intentionally carry no usage.
-        turn.finish(finish, emit);
       } catch (error) {
         const event: AdapterEvent = {
           type: "error",

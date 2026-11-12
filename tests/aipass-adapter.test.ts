@@ -111,6 +111,58 @@ test("upstream policy errors identify the refusal without exposing the echoed pr
   expect(JSON.stringify(events)).not.toContain("PRIVATE_PROMPT");
 });
 
+test("retries a rejected multi-call frame before emitting any tool calls", async () => {
+  let attempts = 0;
+  const f = fixture({ chat: body => {
+    attempts++;
+    const call = { name: "read", arguments: { path: "file" } };
+    return stream(chunks(frame(body, attempts === 1 ? [call, call] : [call])));
+  } });
+  const parsed = request();
+  parsed.options.parallelToolCalls = false;
+  parsed.context.tools = [{ name: "read", description: "Read a file", parameters: { type: "object", required: ["path"], properties: { path: { type: "string" } } } }];
+  const events = await run(f.bridgeUrl, parsed);
+  expect(attempts).toBe(2);
+  expect(events.filter(event => event.type === "tool_call_start")).toHaveLength(1);
+  expect(events.at(-1)).toEqual({ type: "done", stopReason: "tool_use", endTurn: false });
+});
+
+test("retries invalid frame JSON without executing the rejected frame", async () => {
+  let attempts = 0;
+  const f = fixture({ chat: body => {
+    attempts++;
+    const valid = frame(body, [{ name: "read", arguments: { path: "file" } }]);
+    return stream(chunks(attempts === 1 ? valid.replace(/}\nEND_AIPASS_TOOLS_/, "}}\nEND_AIPASS_TOOLS_") : valid));
+  } });
+  const parsed = request();
+  parsed.context.tools = [{ name: "read", description: "Read a file", parameters: { type: "object" } }];
+  const events = await run(f.bridgeUrl, parsed);
+  expect(attempts).toBe(2);
+  expect(events.filter(event => event.type === "tool_call_start")).toHaveLength(1);
+});
+
+test("stops after three invalid tool frames without emitting a tool call", async () => {
+  let attempts = 0;
+  const f = fixture({ chat: body => {
+    attempts++;
+    const valid = frame(body, [{ name: "read", arguments: { path: "file" } }]);
+    return stream(chunks(valid.replace(/}\nEND_AIPASS_TOOLS_/, "}}\nEND_AIPASS_TOOLS_")));
+  } });
+  const parsed = request();
+  parsed.context.tools = [{ name: "read", description: "Read a file", parameters: { type: "object" } }];
+  const events = await run(f.bridgeUrl, parsed);
+  expect(attempts).toBe(3);
+  expect(events.filter(event => event.type === "tool_call_start")).toHaveLength(0);
+  expect(events.at(-1)).toMatchObject({ type: "error", message: "AI Pass model returned invalid tool frame JSON" });
+});
+
+test("reports extension timeouts without exposing upstream error text", async () => {
+  const f = fixture({ chat: () => Response.json({ error: { message: "timed out waiting for the extension PRIVATE_PROMPT" } }, { status: 502 }) });
+  const events = await run(f.bridgeUrl);
+  expect(events).toContainEqual(expect.objectContaining({ type: "error", message: expect.stringContaining("timed out waiting for the browser extension") }));
+  expect(JSON.stringify(events)).not.toContain("PRIVATE_PROMPT");
+});
+
 test("serializes the entire context into one user prompt, uses isolated turns and never forwards auth or fabricates usage", async () => {
   const f = fixture();
   const parsed = request();

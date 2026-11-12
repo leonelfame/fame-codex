@@ -51,29 +51,32 @@ TH AI Pass connects models available in your signed-in TH AI Pass account to Cod
 
 ### Setup
 
-1. Open **Settings → TH AI Pass** in the Fame Codex launcher and enable **TH AI Pass**.
+1. Install Fame Codex on this computer. Open **Settings → TH AI Pass Experimental** in the launcher and enable **TH AI Pass**.
 2. Click **Open extension folder**.
-3. Open the extensions manager in Chrome or Edge and enable **Developer mode**. Choose **Load unpacked** and select the folder opened by the launcher, containing `manifest.json`.
-4. Click **Open TH AI Pass**, sign in to `de.aipass.net` in the browser where you installed the extension, and open its chat page. Keep that tab open while using Codex.
-5. Return to the launcher and click **Refresh models**. Confirm that the status reads **Extension connected** and the model list is populated.
-6. Restart Codex and choose an available model with an ID beginning with `aipass/`.
+3. In Chrome, open `chrome://extensions` and turn on **Developer mode**.
+4. Click **Load unpacked** and select the folder opened by Fame Codex. Select the folder that contains `manifest.json`.
+5. Click **Open TH AI Pass**, sign in to `de.aipass.net` in Chrome, and open a chat page. Use the same Chrome profile where you installed the extension, and keep a TH AI Pass tab open while using Codex.
+6. Return to Fame Codex and click **Refresh models**. Confirm that the status reads **Extension connected** and the model list is populated.
+7. Restart Codex if needed, choose a listed TH AI Pass model (its ID begins with `aipass/`), and start a new Codex session.
 
 If the extension is already installed, enable the integration, open your signed-in TH AI Pass chat tab, and refresh models. The launcher starts the bundled bridge automatically; no separate bridge server installation is required.
 
 ### Usage and limits
 
 - Keep Fame Codex, the browser extension, and the signed-in TH AI Pass chat tab running during requests.
+- If Chrome suspends the background chat tab, bring it to the foreground or exclude `de.aipass.net` from Chrome's memory-saver settings.
 - Model availability and usage allowances depend on your TH AI Pass account. The launcher lists eligible chat/text models returned by the connected extension.
 - The local prompt budget is **262,144 tokens**, including serialized conversation history and tool definitions. This is a transport limit; individual upstream models may accept less context.
 - Long sessions or large tool catalogs may exceed the prompt budget. Shorten the session or reduce enabled tools if this happens.
 - This integration is experimental and uses a separate browser-extension transport from the ChatGPT MCP harness described below.
+- Remote compaction is not supported for TH AI Pass sessions. Start a new session when switching to or from a TH AI Pass model.
 - Requests are processed through TH AI Pass using your signed-in account. Use it only for content you are authorized to send to that service.
 
 ### Troubleshooting
 
 | Status or problem | What to do |
 | --- | --- |
-| **Waiting for extension** | Check that the extension is enabled in the browser you are using, then reload the TH AI Pass chat tab and click **Refresh models**. |
+| **Waiting for extension** | Check that the extension is enabled at `chrome://extensions`, then reload the TH AI Pass chat tab and click **Refresh models**. |
 | **Extension connected**, but no models | Confirm you are signed in and the chat page has loaded, then refresh models again. |
 | Models missing from Codex | Confirm the launcher has a populated model list, then restart Codex. |
 | `port_unavailable` | Another process is using local port **17843**. Close the conflicting process if appropriate, then disable and re-enable TH AI Pass. Fame Codex leaves other processes running. |
@@ -167,6 +170,7 @@ Settings can also cancel a retained browser turn or remove the Codex integration
 **Temporary Chat** keeps new task conversations out of ChatGPT history and defaults on for new setups.
 It is independent of **New browser chat for each turn**. Existing **Save chats** preferences migrate
 to the equivalent Temporary Chat choice. Turn Temporary Chat off to keep ordinary saved conversations.
+**Settings → Trusted Codex homes** lets ChatGPT chats recover their working folder from other Codex homes, such as an Orca account. Choose each folder deliberately: it must contain a `sessions` folder, at most seven can be added, and the change applies the next time the launcher-owned runtime starts.
 **Settings → Sleep Fame Codex** temporarily restores your previous Codex route; **Wake** reconnects it.
 Restart Codex after changing Sleep or refreshing the model catalog.
 Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` only when every browser checkpoint needs a screenshot.

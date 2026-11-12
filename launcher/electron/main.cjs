@@ -46,6 +46,7 @@ const {
   nextSessionRefreshReminderAt,
   validateSidebarState,
 } = require("./state.cjs");
+const { trustedHomesEnvironment, usableTrustedHomes, validateTrustedHomes } = require("./trusted-homes.cjs");
 const {
   MIN_WINDOW_BOUNDS,
   readWindowState,
@@ -73,6 +74,16 @@ const launchEnvironment = {
   FAME_CODEX_HOME: process.env.FAME_CODEX_HOME,
   CODEX_HOME: process.env.CODEX_HOME,
 };
+const launchTrustedCodexHomes = process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+// Runtime children inherit this process environment, so the registration applies when the
+// launcher-owned runtime next starts; a running bridge is never changed in place.
+function applyTrustedCodexHomes(homes) {
+  if (IS_DEV_PROFILE) return;
+  const value = trustedHomesEnvironment(homes);
+  if (value !== null) process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES = value;
+  else if (launchTrustedCodexHomes === undefined) delete process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+  else process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES = launchTrustedCodexHomes;
+}
 process.env.FAME_CODEX_HOME = CORE_HOME;
 process.env.CODEX_HOME = LAUNCHER_PROFILE.codexHome;
 if (IS_DEV_PROFILE) delete process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
@@ -653,6 +664,27 @@ function registerIpc({ logger, stateStore }) {
   const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, async (...args) => {
     if (runtimeChannels.has(channel)) await runtimeStartup;
     return handler(...args);
+  });
+  handle("launcher:trusted-codex-home-select", async () => {
+    if (IS_DEV_PROFILE) throw new Error("Trusted Codex homes are available only in the production launcher");
+    const picked = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory", "showHiddenFiles"] })
+      : await dialog.showOpenDialog({ properties: ["openDirectory", "showHiddenFiles"] });
+    const current = stateStore.read();
+    if (picked.canceled || picked.filePaths.length !== 1) return current;
+    const homes = validateTrustedHomes([...usableTrustedHomes(current.trustedCodexHomes), picked.filePaths[0]]);
+    trustedHomesEnvironment(homes);
+    applyTrustedCodexHomes(homes);
+    const state = stateStore.update({ trustedCodexHomes: homes });
+    send("launcher:state-changed", state);
+    return state;
+  });
+  handle("launcher:trusted-codex-homes-clear", async () => {
+    if (IS_DEV_PROFILE) throw new Error("Trusted Codex homes are available only in the production launcher");
+    applyTrustedCodexHomes([]);
+    const state = stateStore.update({ trustedCodexHomes: [] });
+    send("launcher:state-changed", state);
+    return state;
   });
   handle("launcher:aipass-status", () => queueAiPass(() => aiPassSnapshot()));
   handle("launcher:sleep-status", async () => {
@@ -1282,6 +1314,8 @@ async function start() {
   await app.whenReady();
 
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"));
+  // An unusable saved list (edited by hand) leaves the default trust boundary unchanged.
+  try { applyTrustedCodexHomes(stateStore.read().trustedCodexHomes); } catch { /* default trust */ }
   limitsController = new LimitsController(path.join(app.getPath("userData"), "limits.json"), {
     getInteractionMode: () => stateStore.read().browserInteractionMode,
   });

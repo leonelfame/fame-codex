@@ -16,6 +16,7 @@ const DEFAULT_STATE = Object.freeze({
   includePrereleaseUpdates: false,
   showBrowserDuringTurns: true,
   autoApproveToolCalls: false,
+  trustedCodexHomes: [],
   browserInteractionMode: "automatic",
   experimentalBiggerContext: false,
   composerPredictionsEnabled: true,
@@ -41,6 +42,10 @@ function readState(filePath) {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, ""));
     if (!parsed || parsed.version !== 1) return { ...DEFAULT_STATE };
     const state = { ...DEFAULT_STATE, ...migrateChatPreference(parsed) };
+    if (!Array.isArray(state.trustedCodexHomes) || state.trustedCodexHomes.length > 7
+      || state.trustedCodexHomes.some(home => typeof home !== "string" || home.length > 4096)) {
+      state.trustedCodexHomes = [];
+    }
     delete state.bridgeEnabled;
     if (state.language !== null && (typeof state.language !== "string" || !Object.hasOwn(languages, state.language))) {
       state.language = DEFAULT_STATE.language;

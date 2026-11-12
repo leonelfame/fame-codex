@@ -1850,6 +1850,17 @@ function SettingsSurface({
       setBusy(false);
     }
   };
+  const changeTrustedCodexHomes = async (action: "select" | "clear") => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await (action === "select" ? api!.selectTrustedCodexHome() : api!.clearTrustedCodexHomes()));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const setFreshConversationPerTurn = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -2018,6 +2029,21 @@ function SettingsSurface({
             onChange={(checked) => void setAutoApproveToolCalls(checked)}
           />
         </SettingRow>
+        {!devProfile ? <div className="plugin-name-setting">
+          <SettingRow body={copy.trustedCodexHomesBody} label={copy.trustedCodexHomes}>
+            <div className="manual-turn-actions">
+              <SecondaryButton disabled={busy || snapshot.state.trustedCodexHomes.length >= 7} onClick={() => void changeTrustedCodexHomes("select")}>
+                {copy.trustedCodexHomesAdd}
+              </SecondaryButton>
+              {snapshot.state.trustedCodexHomes.length ? (
+                <SecondaryButton disabled={busy} onClick={() => void changeTrustedCodexHomes("clear")}>
+                  {copy.trustedCodexHomesClear}
+                </SecondaryButton>
+              ) : null}
+            </div>
+          </SettingRow>
+          {snapshot.state.trustedCodexHomes.map(home => <code key={home}>{home}</code>)}
+        </div> : null}
         <SettingRow body={copy.temporaryChatsBody} label={copy.temporaryChats}>
           <Switch
             checked={snapshot.state.useTemporaryChats}

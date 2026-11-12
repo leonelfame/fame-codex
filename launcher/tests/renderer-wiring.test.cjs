@@ -822,7 +822,7 @@ test("browser preference controls are translated, disabled in Zero Risk, and inv
       for (const available of property === "experimentalBiggerContext" ? [true, false] : [true])
       for (const [mode, configured, enabled] of [["automatic", true, false], ["automatic", true, true], ["manual", true, true], ["automatic", false, false]]) {
         const tree = render({ copy, devProfile: false, language, configureInteractionMode() {}, setError() {},
-          snapshot: { connectorNames: { automatic: "Fame Codex Native2", manual: "Fame Codex Zero Risk" }, state: { browserInteractionMode: mode, coreSetupComplete: configured, biggerContextAvailable: available, [property]: enabled } },
+          snapshot: { connectorNames: { automatic: "Fame Codex Native2", manual: "Fame Codex Zero Risk" }, state: { trustedCodexHomes: [], browserInteractionMode: mode, coreSetupComplete: configured, biggerContextAvailable: available, [property]: enabled } },
           updateState: value => { saved = value; },
         });
         const row = visit(tree).find(node => node.type === "SettingRow" && node.props.label === copy[label]);
@@ -956,7 +956,7 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
   const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
     ? [tree, ...visit(tree.children ?? [])] : [];
   const render = () => { cursor = 0; return visit(sandbox.render({ copy, devProfile: false, language: "en",
-    snapshot: { connectorNames: { automatic: "Fame Codex Native2", manual: "Fame Codex Zero Risk" }, state: { browserInteractionMode: "automatic", coreSetupComplete: true } },
+    snapshot: { connectorNames: { automatic: "Fame Codex Native2", manual: "Fame Codex Zero Risk" }, state: { trustedCodexHomes: [], browserInteractionMode: "automatic", coreSetupComplete: true } },
     configureInteractionMode: mode => { configureMode = mode; }, setError: error => { if (error) throw new Error(error); }, updateState() {},
   })); };
   let nodes = render();
@@ -1026,7 +1026,7 @@ test("Sleep and Wake controls follow runtime status and retain the current state
   const props = { copy, devProfile: false, language: "en", configureInteractionMode() {},
     setError: error => errors.push(error), updateState: state => published.push(state),
     snapshot: { profilePaths: { coreHome: "fixture", codexHome: "fixture", userData: "fixture" },
-      connectorNames: { automatic: "Fame Codex Native2" }, state: { coreSetupComplete: true, browserInteractionMode: "automatic" } },
+      connectorNames: { automatic: "Fame Codex Native2" }, state: { trustedCodexHomes: [], coreSetupComplete: true, browserInteractionMode: "automatic" } },
   };
   const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
     ? [tree, ...visit(tree.children)] : [];

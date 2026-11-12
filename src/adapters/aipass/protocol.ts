@@ -97,6 +97,11 @@ export function prepareTurn(parsed: CodexParsedRequest) {
   const prompt = [
     "EXPERIMENTAL CODEX WEB WRAPPER. The JSON below is the complete ordered Codex context, not just its latest message.",
     "Apply systemPrompt and developer instructions, preserve conversation roles, and use toolResult entries as results of earlier calls.",
+    "You are the Codex assistant working on the user's real task. Environment context in the messages, including cwd and workspace roots, describes the actual workspace available through the supplied tools.",
+    "For requests to inspect or change the project, use the supplied tools to examine and work in that workspace. Do not claim to have inspected or changed files without a tool result confirming it.",
+    "For repository discovery, use targeted searches such as rg --files or rg -n, then inspect only relevant source files. Avoid recursive listings of the whole workspace, dependencies, generated files, or build output; keep tool output bounded.",
+    "Search multiple plausible spellings if a search has no matches. For example, AI Pass may be written aipass, ai-pass, or ai_pass. Read relevant source files before describing their implementation.",
+    "A failed, interrupted, truncated, or missing tool result is not evidence. If a tool fails, narrow the search and try again; report uncertainty instead of inventing paths, behavior, or completed work.",
     "Return an ordinary final answer as plain text. Do not wrap normal answers in JSON or a tool frame.",
     ...(parsed.options.verbosity ? [{
       low: "Keep the final answer concise and direct while satisfying every explicit requirement.",
@@ -110,6 +115,7 @@ export function prepareTurn(parsed: CodexParsedRequest) {
     "arguments must be a JSON object (or a string encoding a JSON object) satisfying the supplied tool parameters.",
     'For freeform tools use arguments:{"input":"exact unmodified freeform input"}. For toolSearch use its supplied JSON argument schema.',
     "Calls are requests for outer Codex to execute. Never pretend to execute them or fabricate their results.",
+    ...(parsed.options.parallelToolCalls === false ? ["The calls array MUST contain exactly one call. Wait for its toolResult before requesting another call."] : []),
     `Allowed wire names: ${JSON.stringify([...allowed])}. Tool call required: ${required}. Parallel calls allowed: ${parsed.options.parallelToolCalls !== false}.`,
     "BEGIN_CODEX_CONTEXT_JSON",
     JSON.stringify({ ...parsed.context, tools: tools.map(tool => ({ ...tool, wireName: namespacedToolName(tool.namespace, tool.name) })), options: promptOptions }),
@@ -147,13 +153,22 @@ export function prepareTurn(parsed: CodexParsedRequest) {
       const text = buffer.trim();
       if (text.startsWith(open)) {
         if (reason !== "stop" || !text.endsWith(close)) throw new AiPassError("Incomplete tool frame");
-        const frame = frameSchema.parse(JSON.parse(text.slice(open.length, -close.length)));
+        let decoded: unknown;
+        const frameText = text.slice(open.length, -close.length).trim();
+        try { decoded = JSON.parse(frameText); }
+        catch { throw new AiPassError("AI Pass model returned invalid tool frame JSON"); }
+        const frame = frameSchema.parse(decoded);
         if (parsed.options.parallelToolCalls === false && frame.calls.length > 1) throw new AiPassError("Parallel tool calls were disabled");
         // Validate the whole batch before exposing any executable call.
         const calls = frame.calls.map(call => {
           const tool = byName.get(call.name);
           if (!tool || !allowed.has(call.name)) throw new AiPassError(`Disallowed tool: ${call.name}`);
-          const args = objectArguments.parse(typeof call.arguments === "string" ? JSON.parse(call.arguments) : call.arguments);
+          let decodedArguments: unknown = call.arguments;
+          if (typeof decodedArguments === "string") {
+            try { decodedArguments = JSON.parse(decodedArguments); }
+            catch { throw new AiPassError("AI Pass model returned invalid tool arguments JSON"); }
+          }
+          const args = objectArguments.parse(decodedArguments);
           if (tool.freeform) z.object({ input: z.string() }).strict().parse(args);
           else if (!validators.get(call.name)?.(args)) throw new AiPassError(`Arguments violate schema for ${call.name}`);
           return { name: call.name, arguments: JSON.stringify(args), id: `call_${randomUUID().replaceAll("-", "")}` };

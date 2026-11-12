@@ -34,6 +34,7 @@ test('model jobs follow the active or most recently used live chat instead of th
   assert.equal((await setup([old, recent]).pickTab()).id, 2);
   assert.equal((await setup([{ ...old, active: true }, recent]).pickTab()).id, 1);
   assert.equal((await setup([old, { ...recent, discarded: true }]).pickTab()).id, 1);
+  assert.equal((await setup([old, { ...recent, active: true, frozen: true }]).pickTab()).id, 1);
   assert.equal(await setup().pickTab(), null);
 });
 

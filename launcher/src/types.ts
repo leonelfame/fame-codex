@@ -16,6 +16,7 @@ export interface LauncherState {
   includePrereleaseUpdates: boolean;
   showBrowserDuringTurns: boolean;
   autoApproveToolCalls: boolean;
+  trustedCodexHomes: string[];
   browserInteractionMode: BrowserInteractionMode;
   experimentalBiggerContext: boolean;
   biggerContextAvailable?: boolean;
@@ -210,6 +211,8 @@ export interface LauncherApi {
   setComposerPredictions(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setAutoApproveToolCalls(enabled: boolean): Promise<LauncherState>;
+  selectTrustedCodexHome(): Promise<LauncherState>;
+  clearTrustedCodexHomes(): Promise<LauncherState>;
   setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
   setTemporaryChats(enabled: boolean): Promise<LauncherState>;
   refreshModels(): Promise<{ solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean }>;
