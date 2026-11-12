@@ -139,7 +139,7 @@ codex-chatgpt-web subagents native
 - 브라우저 상태는 민감한 로그인 정보이며 loopback listener는 동일한 로컬 사용자로 실행되는
   프로세스에서 접근할 수 있습니다. 런처 프로필을 공유하지 말고 신뢰할 수 있는 워크스테이션에서
   사용하세요.
-- 현재 릴리스 패키지는 macOS 13+(arm64/x64), Windows x64 및 Linux x64를 대상으로 합니다.
+- 현재 릴리스 패키지는 macOS 13+(Apple silicon/arm64 전용, Intel Mac 미지원), Windows x64 및 Linux x64를 대상으로 합니다.
   런타임, 테스트 및 패키징은 CI에서 세 운영체제 모두에 대해 검증되며, 계정 종속 브라우저 및
   MCP 흐름은 별도의 release validation을 사용합니다.
 - 아직 플랫폼 서명이 적용되지 않은 빌드에서는 Gatekeeper 또는 SmartScreen 경고가 표시될 수

@@ -14,8 +14,7 @@ fi
 
 case "$(uname -m)" in
   arm64) ARCH="arm64" ;;
-  x86_64) ARCH="amd64" ;;
-  *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+  *) echo "Unsupported macOS architecture: $(uname -m) (Apple silicon only)" >&2; exit 1 ;;
 esac
 
 ASSET="codex-chatgpt-web-darwin-$ARCH.tar.gz"

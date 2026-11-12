@@ -196,7 +196,7 @@ codex-chatgpt-web subagents native
   drift fails explicitly instead of silently switching model or transport.
 - Browser state is a sensitive login artifact, and the loopback listener is reachable by processes
   running as the same local user. Never share the launcher profile; use a trusted workstation.
-- Release packages currently target macOS 13+ (arm64/x64), Windows x64, and Linux x64. Runtime,
+- Release packages currently target macOS 13+ (Apple silicon/arm64 only; Intel Macs are not supported), Windows x64, and Linux x64. Runtime,
   tests, and packaging are gated on all three in CI; account-bound browser and MCP flows use the
   separate [release validation](docs/release-validation.md).
 - Builds are not yet platform-signed, so Gatekeeper or SmartScreen may warn. The installers verify

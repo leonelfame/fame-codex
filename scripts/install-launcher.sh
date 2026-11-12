@@ -17,8 +17,7 @@ case "$OS" in
     EXTENSION="zip"
     case "$MACHINE" in
       arm64|aarch64) ARCH="arm64" ;;
-      x86_64|amd64) ARCH="x64" ;;
-      *) echo "Unsupported macOS architecture: $MACHINE" >&2; exit 1 ;;
+      *) echo "Unsupported macOS architecture: $MACHINE (Apple silicon only)" >&2; exit 1 ;;
     esac
     ;;
   Linux)

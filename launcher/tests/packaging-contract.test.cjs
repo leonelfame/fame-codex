@@ -211,7 +211,7 @@ test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   assert.match(ci, /prepare-linux-appimage-tools\.cjs/);
   assert.match(ci, /archlinux:base/);
   assert.match(ci, /prepare-windows-baseline-bun\.ps1 -Version 1\.4\.0/);
-  for (const runner of ["macos-15", "macos-15-intel", "ubuntu-latest", "ubuntu-24.04-arm", "windows-latest"]) {
+  for (const runner of ["macos-15", "ubuntu-latest", "ubuntu-24.04-arm", "windows-latest"]) {
     assert.match(release, new RegExp(runner));
   }
   assert.match(release, /launcher\/build\/runtime/);

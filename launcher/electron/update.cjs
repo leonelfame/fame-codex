@@ -44,8 +44,8 @@ function releaseVersion(tagName) {
 }
 
 function releaseAssetName(version, platform = process.platform, arch = process.arch) {
-  if (platform === "darwin" && ["arm64", "x64"].includes(arch)) {
-    return `fame-codex-${version}-mac-${arch}.zip`;
+  if (platform === "darwin" && arch === "arm64") {
+    return `fame-codex-${version}-mac-arm64.zip`;
   }
   if (platform === "win32" && arch === "x64") {
     return `fame-codex-${version}-win-x64.exe`;
