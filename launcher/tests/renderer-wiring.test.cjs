@@ -10,6 +10,16 @@ const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.c
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
 const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
 
+test("embedded browser reset is wired end-to-end and waits for runtime startup", () => {
+  assert.match(preloadSource, /resetEmbeddedBrowserData: \(\) => ipcRenderer\.invoke\("launcher:browser-reset-data"\)/);
+  assert.match(electronMain, /"launcher:browser-reset-data", "launcher:browser-smoke"/);
+  assert.match(electronMain, /handle\("launcher:browser-reset-data", async \(\) => \{/);
+  assert.match(electronMain, /const browser = await browserHost\.resetEmbeddedBrowserData\(\);\s*dismissSessionReminder\(\);\s*return browser;/);
+  assert.match(appSource, /await api!\.resetEmbeddedBrowserData\(\)/);
+  assert.match(appSource, /confirmBrowserReset \? \(/);
+  assert.match(appSource, /label=\{copy\.embeddedBrowserReset\}/);
+});
+
 test("Sleep IPC blocks active turns and publishes restart state only after routing succeeds", async () => {
   const vm = require("node:vm");
   const handlers = new Map(), calls = [], events = [];

@@ -15,6 +15,21 @@ const koreanReadme = read("README.ko.md");
 const languages = require("../electron/languages.json");
 const appSource = read("launcher", "src", "App.tsx");
 
+test("browser reset and browser locale guidance are available in all supported launcher languages", () => {
+  const { copyFor } = loadI18nModule();
+  const english = copyFor("en");
+  for (const language of Object.keys(languages)) {
+    const copy = copyFor(language);
+    for (const key of ["embeddedBrowserReset", "embeddedBrowserResetBody", "embeddedBrowserResetConfirm",
+      "embeddedBrowserResetSuccess", "embeddedBrowserLanguageHint", "reset"]) {
+      assert.equal(typeof copy[key], "string");
+      assert.ok(copy[key].trim().length > 0);
+      if (language !== "en") assert.notEqual(copy[key], english[key]);
+    }
+  }
+  assert.match(appSource, /body=\{copy\.embeddedBrowserLanguageHint\} label=\{copy\.language\}/);
+});
+
 function loadI18nModule() {
   const source = read("launcher", "src", "i18n.ts");
   const output = ts.transpileModule(source, {

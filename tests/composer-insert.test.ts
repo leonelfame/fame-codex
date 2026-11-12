@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { chromium } from "playwright-core";
-import { ChatGptBrowserWorker, insertPlainTextIntoComposer } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptBrowserWorker, insertPlainTextIntoComposer, replacePlainTextInComposer } from "../src/adapters/chatgpt-web/browser-worker";
 
 /**
  * The composer insert runs inside the page, where the caret state is whatever the last UI
@@ -10,6 +10,7 @@ import { ChatGptBrowserWorker, insertPlainTextIntoComposer } from "../src/adapte
 interface FakeSelection {
   isCollapsed: boolean;
   anchorNode: object | null;
+  focusNode?: object | null;
   removeAllRanges(): void;
   addRange(range: object): void;
 }
@@ -32,15 +33,25 @@ function harness(options: {
     contains: (node: object | null) => node === inside || node === composer,
   };
   const calls: Array<{ command: string; value: string }> = [];
+  let selectedNode: unknown = null;
+  let collapsedRange: boolean | undefined;
   const selection: FakeSelection = {
     isCollapsed: options.collapsed ?? true,
     anchorNode: options.caretInsideComposer ? inside : { name: "node-in-the-effort-menu" },
-    removeAllRanges() { selection.anchorNode = null; },
-    addRange() { selection.anchorNode = inside; selection.isCollapsed = true; },
+    focusNode: options.caretInsideComposer ? inside : { name: "node-in-the-effort-menu" },
+    removeAllRanges() { selection.anchorNode = null; selection.focusNode = null; },
+    addRange() {
+      selection.anchorNode = inside;
+      selection.focusNode = inside;
+      selection.isCollapsed = collapsedRange === true;
+    },
   };
   const fakeDocument = {
     activeElement: null as unknown,
-    createRange: () => ({ selectNodeContents() {}, collapse() {} }),
+    createRange: () => ({
+      selectNodeContents(node: unknown) { selectedNode = node; collapsedRange = false; },
+      collapse() { collapsedRange = true; },
+    }),
     execCommand(command: string, _ui: boolean, value: string) {
       calls.push({ command, value });
       return options.execCommandResult ?? true;
@@ -48,7 +59,8 @@ function harness(options: {
   };
   (globalThis as Record<string, unknown>).document = fakeDocument;
   (globalThis as Record<string, unknown>).window = { getSelection: () => selection };
-  return { composer: composer as unknown as HTMLElement, calls, selection, fakeDocument };
+  return { composer: composer as unknown as HTMLElement, calls, selection, fakeDocument,
+    selectedNode: () => selectedNode, collapsedRange: () => collapsedRange };
 }
 
 test("places the caret itself when focus has not yet produced one in the composer", () => {
@@ -85,6 +97,23 @@ test("reports a genuinely rejected edit as a failure", () => {
   });
 
   expect(insertPlainTextIntoComposer(composer, "staged part")).toBeFalse();
+});
+
+test("replaces a restored draft in plain composer attachments even with an existing caret (#977)", () => {
+  const { composer, calls, selection, selectedNode, collapsedRange } = harness({
+    focusable: true, caretInsideComposer: true,
+  });
+  expect(replacePlainTextInComposer(composer, "staged part")).toBeTrue();
+  expect(selectedNode()).toBe(composer);
+  expect(collapsedRange()).toBeFalse();
+  expect(selection.isCollapsed).toBeFalse();
+  expect(calls).toEqual([{ command: "insertText", value: "staged part" }]);
+});
+
+test("plain replacement fails safely when the composer cannot take focus (#977)", () => {
+  const { composer, calls } = harness({ focusable: false, caretInsideComposer: false });
+  expect(replacePlainTextInComposer(composer, "staged part")).toBeFalse();
+  expect(calls).toEqual([]);
 });
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a selected connector never appends a new request to an old draft", async () => {
