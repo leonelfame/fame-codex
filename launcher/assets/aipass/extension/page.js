@@ -105,7 +105,7 @@
       // server mints the conversation itself and marks it isTemporary, so it
       // never lands in the account's history and expires on its own.
       const params = job.temporary
-        ? new URLSearchParams({ intent: 'create-temporary-chat' })
+        ? new URLSearchParams({ intent: 'create-temporary-chat', modelId: job.modelId })
         : new URLSearchParams({
             message: job.message,
             folderId: '',

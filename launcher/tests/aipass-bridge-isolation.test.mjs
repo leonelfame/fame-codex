@@ -195,6 +195,24 @@ test('isolated requests bind their own temporary IDs under contention and config
   assert.match(await (await b).text(), /beta/);
 });
 
+test('switching isolated models preserves each model through create and chat jobs', async t => {
+  const f = await fixture(t);
+  for (const model of ['gemini-4-argon', 'DeepSeek-V4-Flash', 'claude-opus-5-5@azure']) {
+    const pending = f.post('/v1/chat/isolated', { ...chatBody, model, thinking_level: 'high' });
+    const create = await f.next();
+    assert.equal(create.kind, 'create');
+    assert.equal(create.modelId, model);
+    await f.created(create, `fresh-${model}`);
+    const chat = await f.next();
+    assert.equal(chat.kind, 'chat');
+    assert.equal(chat.modelId, model);
+    assert.equal(chat.conversationId, `fresh-${model}`);
+    await f.post('/ext/chunk', { jobId: chat.jobId, parts: [{ kind: 'text', text: model }] });
+    await f.post('/ext/done', { jobId: chat.jobId });
+    assert.match(await (await pending).text(), new RegExp(model));
+  }
+});
+
 test('isolated cancellation rejects stale extension replies and does not dispatch chat', async t => {
   const f = await fixture(t);
   const controller = new AbortController();

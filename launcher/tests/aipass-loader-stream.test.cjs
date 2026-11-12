@@ -43,6 +43,31 @@ test('a closed JSON response without a newline remains supported', async () => {
   assert.equal((await runJob('loader', new Response('[1,2,3]'))).raw, '[1,2,3]');
 });
 
+test('temporary chat creation explicitly binds the selected upstream model', async () => {
+  let listener;
+  let body;
+  const window = {
+    location: { origin: 'https://de.aipass.net' },
+    addEventListener(_name, callback) { listener = callback; },
+    postMessage() {},
+  };
+  const source = fs.readFileSync(path.join(__dirname, '../assets/aipass/extension/page.js'), 'utf8');
+  vm.runInNewContext(source, {
+    window, URLSearchParams, TextDecoder,
+    fetch: async (_url, options) => {
+      body = new URLSearchParams(options.body);
+      return new Response('[]\n');
+    },
+  });
+  listener({ source: window, data: { __aipass_bridge: 'req', job: {
+    jobId: 'model-create', kind: 'create', temporary: true,
+    modelId: 'claude-opus-5-5@azure',
+  } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(body.get('intent'), 'create-temporary-chat');
+  assert.equal(body.get('modelId'), 'claude-opus-5-5@azure');
+});
+
 for (const raw of ['[1,2\n', '{"models":[]}\n']) {
   test(`invalid loader records are errors rather than model data: ${raw.trim()}`, async () => {
     const reply = await runJob('loader', new Response(raw));
