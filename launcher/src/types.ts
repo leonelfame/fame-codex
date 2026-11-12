@@ -155,7 +155,7 @@ export interface AiPassStatus {
   status: "disabled" | "stopped" | "starting" | "running" | "stopping" | "error";
   port: 17843;
   extensionConnected: boolean;
-  models: { id: string; name: string }[];
+  models: { id: string; name: string; thinking?: string[] }[];
   error: string | null;
   contextWindow: 262144;
 }

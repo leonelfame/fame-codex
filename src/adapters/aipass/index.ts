@@ -55,7 +55,9 @@ async function* sseData(body: ReadableStream<Uint8Array>, signal: AbortSignal): 
 }
 
 /** Experimental WEB wrapper. Tool framing is model-mediated; fixture success is not live provider proof. */
-export function createAiPassAdapter({ bridgeUrl, model }: { bridgeUrl: string; model: string }): ProviderAdapter {
+export function createAiPassAdapter({ bridgeUrl, model, thinking = [] }: {
+  bridgeUrl: string; model: string; thinking?: readonly string[];
+}): ProviderAdapter {
   const origin = bridgeOrigin(bridgeUrl);
   if (!model.trim() || model !== model.trim()) throw new Error("AI Pass requires an explicit bridge model");
   return {
@@ -65,6 +67,16 @@ export function createAiPassAdapter({ bridgeUrl, model }: { bridgeUrl: string; m
       const heartbeat = setInterval(() => emit({ type: "heartbeat" }), 10_000);
       try {
         let turn = prepareTurn(parsed);
+        const requestedEffort = parsed.options.reasoning;
+        const thinkingLevel = requestedEffort && thinking.includes(requestedEffort) ? requestedEffort
+          : requestedEffort === "xhigh" && thinking.includes("max") ? "max"
+          : requestedEffort === "minimal" && thinking.includes("none") ? "none" : requestedEffort;
+        if (thinkingLevel && thinking.length && !thinking.includes(thinkingLevel)) {
+          throw new AiPassError(`TH AI Pass model ${model} does not support effort ${requestedEffort}`, "aipass_unsupported_request", 400);
+        }
+        if (requestedEffort && thinking.length === 0 && requestedEffort !== "medium") {
+          throw new AiPassError(`TH AI Pass model ${model} does not advertise effort controls`, "aipass_unsupported_request", 400);
+        }
         const request = async (path: string, body?: unknown) => {
           signal.throwIfAborted();
           const response = await fetch(`${origin}${path}`, {
@@ -98,7 +110,9 @@ export function createAiPassAdapter({ bridgeUrl, model }: { bridgeUrl: string; m
         for (let attempt = 0; ; attempt++) {
           if (attempt) turn = prepareTurn(parsed);
           const retryInstruction = attempt ? "\nYour previous tool frame was rejected before execution. Return valid JSON using the exact markers. When parallel calls are disabled, provide exactly one call. Do not assume any tool ran." : "";
-          const response = await request("/v1/chat/isolated", { model, stream: true, messages: [{ role: "user", content: turn.prompt + retryInstruction }] });
+          const response = await request("/v1/chat/isolated", { model, stream: true,
+            ...(thinking.length && thinkingLevel ? { thinking_level: thinkingLevel } : {}),
+            messages: [{ role: "user", content: turn.prompt + retryInstruction }] });
           if (!response.headers.get("content-type")?.startsWith("text/event-stream") || !response.body) {
             await response.body?.cancel();
             throw new AiPassError("Bridge did not return an SSE stream");

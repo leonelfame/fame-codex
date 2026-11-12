@@ -71,9 +71,9 @@ function fixture(options: {
 function request(): CodexParsedRequest {
   return { modelId: "aipass/fixture", stream: true, options: {}, context: { messages: [{ role: "user", content: "last question", timestamp: 1 }] } };
 }
-async function run(bridgeUrl: string, parsed = request(), signal?: AbortSignal) {
+async function run(bridgeUrl: string, parsed = request(), signal?: AbortSignal, thinking?: string[]) {
   const events: AdapterEvent[] = [];
-  await createAiPassAdapter({ bridgeUrl, model: "fixture-model" }).runTurn(parsed, {
+  await createAiPassAdapter({ bridgeUrl, model: "fixture-model", thinking }).runTurn(parsed, {
     headers: new Headers({ authorization: "Bearer native-secret-fixture", "chatgpt-account-id": "private-fixture" }), abortSignal: signal,
   }, event => events.push(event));
   return events;
@@ -286,16 +286,45 @@ test("rejects malformed, truncated or wrong-nonce tool frames without executing 
   }
 });
 
-test("accepts Codex reasoning effort and cache keys without sending them to the bridge", async () => {
+test("forwards an advertised TH AI Pass thinking level while keeping cache keys out of the prompt", async () => {
   const f = fixture();
   const parsed = parseRequest({ model: "aipass/fixture", input: "hello", stream: true, reasoning: { effort: "high" }, prompt_cache_key: "private-cache-key" });
-  const events = await run(f.bridgeUrl, parsed);
+  const events = await run(f.bridgeUrl, parsed, undefined, ["low", "medium", "high", "max"]);
   expect(events.at(-1)).toMatchObject({ type: "done" });
   const sent = f.seen.find(row => row.path === "/v1/chat/isolated");
+  expect(record(sent?.body)).toHaveProperty("thinking_level", "high");
   const prompt = promptFrom(sent?.body);
   expect(prompt).not.toContain("private-cache-key");
   const encoded = prompt.split("BEGIN_CODEX_CONTEXT_JSON\n")[1]?.split("\nEND_CODEX_CONTEXT_JSON")[0];
   expect(JSON.parse(encoded ?? "null").options).toEqual({ hideThinkingSummary: true });
+});
+
+test("maps Codex Extra High to upstream max, and rejects unadvertised levels", async () => {
+  const f = fixture();
+  const parsed = parseRequest({ model: "aipass/fixture", input: "hello", reasoning: { effort: "xhigh" } });
+  const events = await run(f.bridgeUrl, parsed, undefined, ["low", "medium", "high", "max"]);
+  expect(events.at(-1)).toMatchObject({ type: "done" });
+  expect(record(f.seen.find(row => row.path === "/v1/chat/isolated")?.body))
+    .toHaveProperty("thinking_level", "max");
+  const unsupported = await run(f.bridgeUrl, parsed, undefined, ["low", "medium", "high"]);
+  expect(unsupported.at(-1)).toMatchObject({ type: "error" });
+  const noMetadata = await run(f.bridgeUrl, parsed);
+  expect(noMetadata.at(-1)).toMatchObject({ type: "error" });
+  expect(f.seen.filter(row => row.path === "/v1/chat/isolated")).toHaveLength(1);
+});
+
+test("prefers exact thinking levels when upstream advertises both none/minimal and max/xhigh", async () => {
+  const f = fixture();
+  for (const effort of ["minimal", "xhigh"] as const) {
+    const parsed = parseRequest({ model: "aipass/fixture", input: "hello", reasoning: { effort } });
+    const events = await run(f.bridgeUrl, parsed, undefined, ["none", "minimal", "max", "xhigh"]);
+    expect(events.at(-1)).toMatchObject({ type: "done" });
+  }
+  const sent = f.seen.filter(row => row.path === "/v1/chat/isolated").map(row => {
+    const body = record(row.body);
+    return "thinking_level" in body ? body.thinking_level : undefined;
+  });
+  expect(sent).toEqual(["minimal", "xhigh"]);
 });
 
 test("Codex text verbosity becomes a final-answer preference without blocking chat or tool calls", async () => {

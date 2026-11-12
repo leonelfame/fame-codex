@@ -66,6 +66,8 @@ If the extension is already installed, enable the integration, open your signed-
 - Keep Fame Codex, the browser extension, and the signed-in TH AI Pass chat tab running during requests.
 - If Chrome suspends the background chat tab, bring it to the foreground or exclude `de.aipass.net` from Chrome's memory-saver settings.
 - Model availability and usage allowances depend on your TH AI Pass account. The launcher lists eligible chat/text models returned by the connected extension.
+- Effort choices are loaded per model from TH AI Pass. Models with no advertised thinking levels use the web default; `max` appears as Extra High in Codex. After refreshing, restart Codex and open a new session to see updated choices.
+- If one computer lists fewer models, compare the models visible in the signed-in TH AI Pass website, use the same browser profile as the extension, and reload the extension before refreshing. Media and unsupported categories are intentionally excluded.
 - The local prompt budget is **262,144 tokens**, including serialized conversation history and tool definitions. This is a transport limit; individual upstream models may accept less context.
 - Long sessions or large tool catalogs may exceed the prompt budget. Shorten the session or reduce enabled tools if this happens.
 - This integration is experimental and uses a separate browser-extension transport from the ChatGPT MCP harness described below.

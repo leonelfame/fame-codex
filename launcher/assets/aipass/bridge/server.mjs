@@ -414,6 +414,7 @@ async function listModels({ force = false } = {}) {
   modelRefresh = (async () => {
     try {
       const models = extractModels(decodeTurboStream(await fetchLoader(LOADERS.models)));
+      if (!models.length) throw new Error('model loader returned no selectable models');
       if (models.length) {
         modelCache = { at: Date.now(), models };
         const free = models.filter((m) => m.free).map((m) => m.id);
@@ -423,6 +424,8 @@ async function listModels({ force = false } = {}) {
       }
     } catch (err) {
       log('model refresh failed:', err.message);
+      // An explicit refresh must not silently return an older/incomplete catalog.
+      if (force) throw new Error('TH AI Pass model loader failed; check the signed-in browser tab and reload the extension');
     } finally {
       modelRefresh = null;
     }

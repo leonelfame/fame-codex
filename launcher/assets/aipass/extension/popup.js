@@ -261,12 +261,13 @@ $('save').addEventListener('click', async () => {
 
 $('refresh').addEventListener('click', async () => {
   try {
-    await fetch(`${bridge}/v1/models?refresh=1`, { cache: 'no-store' });
+    const response = await fetch(`${bridge}/v1/models?refresh=1`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Model refresh returned HTTP ${response.status}`);
     await fetch(`${bridge}/quota?refresh=1`, { cache: 'no-store' }).catch(() => {});
     modelSignature = '';
     toast('Refreshed');
   } catch {
-    toast('Could not reach the bridge');
+    toast('Model refresh failed; check the signed-in tab');
   }
   render();
 });

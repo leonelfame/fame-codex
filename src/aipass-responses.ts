@@ -13,10 +13,11 @@ export async function aiPassResponseRequest(req: Request, raw: unknown): Promise
     const expanded = expandPreviousResponseInput(raw);
     const parsed = parseRequest(expanded);
     const model = parsed.modelId.slice(AIPASS_MODEL_PREFIX.length);
-    if (!settings.models.some(row => row.id === model)) {
+    const selected = settings.models.find(row => row.id === model);
+    if (!selected) {
       return formatErrorResponse(400, "invalid_request_error", "Unknown TH AI Pass model. Refresh models with the extension connected.");
     }
-    const adapter = createAiPassAdapter({ bridgeUrl: AIPASS_BRIDGE_URL, model });
+    const adapter = createAiPassAdapter({ bridgeUrl: AIPASS_BRIDGE_URL, model, thinking: selected.thinking });
     const queue = new AsyncEventQueue<AdapterEvent>();
     const abort = new AbortController();
     const cancel = () => abort.abort(req.signal.reason);

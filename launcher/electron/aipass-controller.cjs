@@ -5,6 +5,7 @@ const { spawn } = require("node:child_process");
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_MODELS = 256;
+const THINKING_LEVELS = new Set(["none", "minimal", "low", "medium", "high", "max", "xhigh"]);
 
 function boundedTimeout(value, fallback) {
   const timeout = value ?? fallback;
@@ -93,7 +94,11 @@ function modelsFromResponse(value) {
       || /[\x00-\x1f\x7f]/.test(row.id)) continue;
     const name = typeof row.name === "string" && row.name.trim()
       ? row.name.slice(0, 256).replace(/[\x00-\x1f\x7f]/g, "") : row.id;
-    if (!models.has(row.id)) models.set(row.id, { id: row.id, name, kind: row.kind });
+    const thinking = Array.isArray(row.thinking)
+      ? [...new Set(row.thinking.filter(level => typeof level === "string" && THINKING_LEVELS.has(level)))].slice(0, 8)
+      : [];
+    if (!models.has(row.id)) models.set(row.id, { id: row.id, name, kind: row.kind,
+      ...(thinking.length ? { thinking } : {}) });
   }
   return [...models.values()];
 }
@@ -128,7 +133,8 @@ class AiPassController {
   }
 
   snapshot() {
-    return { ...this.state, models: this.state.models.map(model => ({ ...model })) };
+    return { ...this.state, models: this.state.models.map(model => ({ ...model,
+      ...(model.thinking ? { thinking: [...model.thinking] } : {}) })) };
   }
 
   start() { return this.enqueue(() => this.startOwned()); }

@@ -31,6 +31,8 @@ export function AiPassSettings({ api }: { api: LauncherApi; language: Language }
     : "Bridge stopped";
   const bridgeError = state?.error === "port_unavailable"
     ? ("Port 17843 is in use. Other processes are left running.")
+    : state?.error === "refresh_failed"
+      ? "TH AI Pass model refresh failed. Open the signed-in chat tab, reload the extension, and try again."
     : state?.error;
   return <section className="aipass-settings" aria-labelledby="aipass-heading" aria-busy={busy}>
     <div className="setting-row">
@@ -61,9 +63,11 @@ export function AiPassSettings({ api }: { api: LauncherApi; language: Language }
     </div>
     {state?.extensionConnected && state.models.length > 0
       ? <ul className="aipass-models" aria-label={"Connected models"}>
-        {state.models.map(model => <li key={model.id}>{model.name} <code>{model.id}</code></li>)}
+        {state.models.map(model => <li key={model.id}>{model.name} <code>{model.id}</code>
+          {model.thinking?.length ? ` · Effort: ${model.thinking.join(", ")}` : " · Web default effort"}</li>)}
       </ul>
       : <p>{"No models loaded from a connected extension yet."}</p>}
     <p className="aipass-hint">{"Connection and model discovery do not verify a successful chat request."}</p>
+    <p className="aipass-hint">{"Only supported text/chat models available to the signed-in TH AI Pass account are listed; image, video and other unsupported model categories are excluded."}</p>
   </section>;
 }

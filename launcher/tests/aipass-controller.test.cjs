@@ -144,7 +144,8 @@ test("real child receives enforced environment; disconnected health never expose
 
 test("connected catalog uses live endpoint, filters capabilities/fallbacks, and returns defensive snapshots", async (t) => {
   const f = await fixture(t, { extensions: 1, models: [
-    { id: "real-chat", name: "Chat", kind: "chat", history: "private" },
+    { id: "real-chat", name: "Chat", kind: "chat", history: "private",
+      thinking: ["low", "medium", "high", "max", "unknown", "medium"] },
     { id: "real-text", name: "Text", kind: "text" },
     { id: "real-chat", name: "Duplicate", kind: "chat" },
     ...["image", "video", "music", "research"].map(kind => ({ id: kind, kind })),
@@ -156,13 +157,16 @@ test("connected catalog uses live endpoint, filters capabilities/fallbacks, and 
   const status = await f.controller.start();
   assert.equal(status.extensionConnected, true);
   assert.deepEqual(status.models, [
-    { id: "real-chat", name: "Chat", kind: "chat" }, { id: "real-text", name: "Text", kind: "text" },
+    { id: "real-chat", name: "Chat", kind: "chat", thinking: ["low", "medium", "high", "max"] },
+    { id: "real-text", name: "Text", kind: "text" },
   ]);
   assert.equal((await fixtureRequest(f.port)).modelsRequests, 1);
   status.models[0].id = "changed";
+  status.models[0].thinking.push("changed");
   status.models.push({ id: "injected" });
   assert.equal(f.controller.snapshot().models.length, 2);
   assert.equal(f.controller.snapshot().models[0].id, "real-chat");
+  assert.deepEqual(f.controller.snapshot().models[0].thinking, ["low", "medium", "high", "max"]);
   await fixtureRequest(f.port, { extensions: 0 });
   assert.deepEqual((await f.controller.refresh()).models, []);
   assert.equal((await fixtureRequest(f.port)).modelsRequests, 1);

@@ -13,6 +13,7 @@ const settingsSchema = z.object({
   models: z.array(z.object({
     id: z.string().trim().min(1).max(256).regex(/^[^\x00-\x1f\x7f]+$/),
     name: z.string().min(1).max(256),
+    thinking: z.array(z.enum(["none", "minimal", "low", "medium", "high", "max", "xhigh"])).max(8).optional(),
   })).max(256),
   // A local prompt budget, not a claim about the upstream model's capacity.
   contextWindow: z.union([z.literal(16384), z.literal(AIPASS_PROMPT_TOKEN_BUDGET)])

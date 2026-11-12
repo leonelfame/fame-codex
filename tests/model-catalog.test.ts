@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultConfig } from "../src/config";
@@ -65,6 +65,21 @@ function source(): Record<string, unknown> {
 }
 
 describe("native /models augmentation", () => {
+  test("TH AI Pass advertises only upstream supported efforts, with max mapped to Extra High", () => {
+    writeFileSync(join(isolatedHome, "aipass.json"), JSON.stringify({ version: 1, enabled: true,
+      contextWindow: 262144, models: [
+        { id: "opus", name: "Opus", thinking: ["low", "medium", "high", "max"] },
+        { id: "basic", name: "Basic" },
+      ],
+    }));
+    const models = augmentNativeModelCatalog(source(), defaultConfig("full")).models as Array<Record<string, unknown>>;
+    const opus = models.find(model => model.slug === "aipass/opus");
+    const basic = models.find(model => model.slug === "aipass/basic");
+    expect(opus?.default_reasoning_level).toBe("medium");
+    expect((opus?.supported_reasoning_levels as Array<{ effort: string }>).map(row => row.effort))
+      .toEqual(["low", "medium", "high", "xhigh"]);
+    expect(basic?.supported_reasoning_levels).toEqual([{ effort: "medium", description: "Uses the model's web default" }]);
+  });
   test("preserves native models, groups supported efforts, and retains hidden legacy metadata", () => {
     const native = source();
     const nativeSnapshot = structuredClone(native);

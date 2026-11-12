@@ -147,11 +147,14 @@ function readAiPassConfig() {
     || !Array.isArray(value.models) || value.models.length > 256
     || value.models.some(model => !model || typeof model.id !== "string" || !model.id.trim()
       || model.id.length > 256 || /[\x00-\x1f\x7f]/.test(model.id)
-      || typeof model.name !== "string" || !model.name.trim() || model.name.length > 256)) {
+      || typeof model.name !== "string" || !model.name.trim() || model.name.length > 256
+      || (model.thinking !== undefined && (!Array.isArray(model.thinking) || model.thinking.length > 8
+        || model.thinking.some(level => !["none", "minimal", "low", "medium", "high", "max", "xhigh"].includes(level)))))) {
     throw new Error("Invalid TH AI Pass settings in aipass.json");
   }
   return { version: 1, enabled: value.enabled,
-    models: value.models.map(({ id, name }) => ({ id, name })), contextWindow: AIPASS_PROMPT_TOKEN_BUDGET };
+    models: value.models.map(({ id, name, thinking }) => ({ id, name, ...(thinking?.length ? { thinking } : {}) })),
+    contextWindow: AIPASS_PROMPT_TOKEN_BUDGET };
 }
 
 function writeAiPassConfig(config) {
@@ -197,7 +200,7 @@ async function updateAiPass(enabled) {
   const snapshot = aiPassSnapshot();
   writeAiPassConfig({ ...config, enabled: nextEnabled,
     models: snapshot.extensionConnected && snapshot.status === "running"
-      ? snapshot.models.map(({ id, name }) => ({ id, name })) : [] });
+      ? snapshot.models.map(({ id, name, thinking }) => ({ id, name, ...(thinking?.length ? { thinking } : {}) })) : [] });
   return snapshot;
 }
 

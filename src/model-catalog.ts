@@ -32,6 +32,18 @@ function reasoningLevel(template: JsonObject, effort: string, description: strin
   return { ...(source ? structuredClone(source) : {}), effort, description };
 }
 
+function aiPassReasoningLevels(template: JsonObject, upstream: readonly string[] | undefined): JsonObject {
+  const levels = [...new Set((upstream ?? []).map(level =>
+    level === "max" ? "xhigh" : level === "none" ? "minimal" : level))];
+  const available = levels.length ? levels : ["medium"];
+  return {
+    default_reasoning_level: available.includes("medium") ? "medium" : available[0],
+    supported_reasoning_levels: available.map(level => reasoningLevel(template, level,
+      levels.length ? `TH AI Pass thinking: ${level === "xhigh" && !upstream?.includes("xhigh") ? "max"
+        : level === "minimal" && !upstream?.includes("minimal") ? "none" : level}` : "Uses the model's web default")),
+  };
+}
+
 function modelPriority(template: JsonObject): number | undefined {
   const value = template.priority;
   if (value === undefined) return undefined;
@@ -212,8 +224,7 @@ export function augmentNativeModelCatalog(
       description: "Experimental browser bridge. Text only. Local 256K prompt budget; upstream limits may be lower. Remote compaction unavailable.",
       input_modalities: ["text"], visibility: "list", supported_in_api: true,
       multi_agent_version: "disabled", tool_mode: null, upgrade: null,
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: [{ effort: "medium", description: "Uses the model's web default" }],
+      ...aiPassReasoningLevels(template, row.thinking),
       context_window: aiPass.contextWindow, max_context_window: aiPass.contextWindow,
       effective_context_window_percent: 100, auto_compact_token_limit: aiPass.contextWindow,
       additional_speed_tiers: [], service_tiers: [], default_service_tier: null,

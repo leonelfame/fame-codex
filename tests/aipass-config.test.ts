@@ -24,3 +24,24 @@ test("legacy and current AiPass settings use the same expanded local budget with
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("AiPass settings retain supported effort metadata and accept legacy entries", () => {
+  const previous = process.env.FAME_CODEX_HOME;
+  const directory = mkdtempSync(join(tmpdir(), "aipass-effort-"));
+  process.env.FAME_CODEX_HOME = directory;
+  try {
+    writeFileSync(join(directory, "aipass.json"), JSON.stringify({
+      version: 1, enabled: true, contextWindow: AIPASS_PROMPT_TOKEN_BUDGET,
+      models: [{ id: "with-effort", name: "With effort", thinking: ["low", "medium", "high", "max"] },
+        { id: "legacy", name: "Legacy" }],
+    }));
+    expect(readAiPassSettings().models).toEqual([
+      { id: "with-effort", name: "With effort", thinking: ["low", "medium", "high", "max"] },
+      { id: "legacy", name: "Legacy" },
+    ]);
+  } finally {
+    if (previous === undefined) delete process.env.FAME_CODEX_HOME;
+    else process.env.FAME_CODEX_HOME = previous;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -6,7 +6,22 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const serverPath = new URL('../assets/aipass/bridge/server.mjs', import.meta.url).pathname.replace(/^\/(\w:)/, '$1');
 
-async function fixture(t, env = {}) {
+function turboRecord(value) {
+  const flat = [];
+  function encode(entry) {
+    const index = flat.length;
+    flat.push(null);
+    flat[index] = Array.isArray(entry) ? entry.map(encode)
+      : entry && typeof entry === 'object'
+        ? Object.fromEntries(Object.entries(entry).map(([key, item]) => [`_${encode(key)}`, encode(item)]))
+        : entry;
+    return index;
+  }
+  encode(value);
+  return JSON.stringify(flat);
+}
+
+async function fixture(t, env = {}, models = null) {
   const listener = net.createServer();
   await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
   const port = listener.address().port;
@@ -39,7 +54,16 @@ async function fixture(t, env = {}) {
           if (record.startsWith('event: abort\n')) { aborts.push(JSON.parse(record.split('\ndata: ')[1])); continue; }
           if (!record.startsWith('event: job\n')) continue;
           const job = JSON.parse(record.split('\ndata: ')[1]);
-          if (job.kind === 'loader') { void post('/ext/loader', { jobId: job.jobId, raw: '[]' }); continue; }
+          if (job.kind === 'loader') {
+            if (models === 'error' && String(job.url).startsWith('/loaders/list-models.data')) {
+              void post('/ext/error', { jobId: job.jobId, message: 'fixture model loader unavailable' });
+              continue;
+            }
+            const raw = models && String(job.url).startsWith('/loaders/list-models.data')
+              ? turboRecord({ models }) : '[]';
+            void post('/ext/loader', { jobId: job.jobId, raw });
+            continue;
+          }
           if (waiters.length) waiters.shift()(job); else queue.push(job);
         }
       }
@@ -51,6 +75,35 @@ async function fixture(t, env = {}) {
 }
 
 const chatBody = { model: 'gemini-3.1-flash-lite', stream: true, messages: [{ role: 'user', content: 'hello' }] };
+
+test('model loader carries per-model thinking levels and excludes non-chat categories when configured', async t => {
+  const f = await fixture(t, { AIPASS_MODEL_FILTER: 'chat' }, [
+    { id: 'opus-example', displayName: 'Opus', thinkingConfig: { supportedLevels: ['low', 'medium', 'high', 'max'] } },
+    { id: 'gemini-example', displayName: 'Gemini' },
+    { id: 'seedream-4.0', displayName: 'Image' },
+  ]);
+  const response = await fetch(f.base + '/v1/models?refresh=1');
+  assert.equal(response.status, 200);
+  const { data } = await response.json();
+  assert.deepEqual(data.map(row => ({ id: row.id, thinking: row.thinking })), [
+    { id: 'opus-example', thinking: ['low', 'medium', 'high', 'max'] },
+    { id: 'gemini-example', thinking: null },
+  ]);
+});
+
+test('explicit model refresh reports upstream loader failure instead of an apparently fresh catalog', async t => {
+  const f = await fixture(t, { AIPASS_MODEL_FILTER: 'chat' }, 'error');
+  const response = await fetch(f.base + '/v1/models?refresh=1');
+  assert.equal(response.status, 500);
+  assert.match(await response.text(), /model loader failed/);
+});
+
+test('explicit model refresh rejects an empty upstream catalog instead of publishing fallback models', async t => {
+  const f = await fixture(t, { AIPASS_MODEL_FILTER: 'chat' }, []);
+  const response = await fetch(f.base + '/v1/models?refresh=1');
+  assert.equal(response.status, 500);
+  assert.match(await response.text(), /model loader failed/);
+});
 
 test('temporary conversations are consumed once, failures do not retry, and contention is rejected', async t => {
   const f = await fixture(t);
