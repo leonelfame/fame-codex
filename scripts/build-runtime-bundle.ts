@@ -40,7 +40,7 @@ function embeddedBunExecutable(): string {
   }
   const reported = version.stdout.toString().trim();
   if (reported !== Bun.version) {
-    throw new Error(`Embedded Bun must match the build runtime (${Bun.version}), received ${reported || "no version"}`);
+    throw new Error(`Embedded Bun must be ${Bun.version} (the build runtime), received ${reported || "no version"}`);
   }
   return executable;
 }
