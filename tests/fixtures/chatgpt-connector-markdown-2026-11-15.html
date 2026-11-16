@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<!-- Semantic fixture. Live launcher verification found that Enter dismisses the
+     markdown mention menu, while the exact button's click inserts its app pill. -->
+<style>
+  [contenteditable] { min-height: 40px; width: 752px; }
+  [data-mention-list-scroll-area] button { width: 752px; height: 36px; }
+</style>
+<form data-chatgpt-composer hidden>
+  <div data-composer-markdown contenteditable="true" role="textbox"></div>
+</form>
+<form data-chatgpt-composer>
+  <div data-composer-markdown contenteditable="true" role="textbox"></div>
+</form>
+<div data-mention-list-scroll-area hidden>
+  <button type="button" data-list-navigation-item="true"><span>Fame Codex Native Home</span><small>Run local Codex tools</small></button>
+</div>
+<script>
+  const form = document.querySelector('form:not([hidden])');
+  const editor = form.querySelector('[contenteditable]');
+  const menu = document.querySelector('[data-mention-list-scroll-area]');
+  const row = menu.querySelector('button');
+  document.body.dataset.activations = '0';
+  function selectApp(name) {
+    document.body.dataset.activations = String(Number(document.body.dataset.activations) + 1);
+    const replacement = editor.cloneNode(false);
+    const pill = document.createElement('span');
+    pill.setAttribute('app-mention-path', 'app://fixture');
+    pill.setAttribute('app-mention-display-name', name);
+    pill.setAttribute('contenteditable', 'false');
+    pill.textContent = name;
+    replacement.append(pill);
+    editor.replaceWith(replacement);
+    replacement.focus();
+    menu.hidden = true;
+  }
+  editor.addEventListener('input', () => { menu.hidden = editor.textContent !== '@codex'; });
+  editor.addEventListener('keydown', event => {
+    if (event.key === 'Escape') menu.hidden = true;
+    if (event.key === 'Enter' && !menu.hidden) {
+      event.preventDefault();
+      selectApp('Other app');
+    }
+  });
+  row.addEventListener('click', () => { selectApp('Fame Codex Native Home'); });
+  row.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      menu.hidden = true;
+    }
+  });
+  form.addEventListener('submit', event => { event.preventDefault(); document.body.dataset.submitted = 'true'; });
+</script>

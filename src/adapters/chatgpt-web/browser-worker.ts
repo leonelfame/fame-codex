@@ -3470,35 +3470,36 @@ export class ChatGptBrowserWorker {
           + ` after ${attemptBudget.triggerAttempts} complete mention trigger attempt(s)`,
         );
       }
-      // Hidden launcher maintenance keeps a 1x1 Chromium viewport, so pointer activation cannot
-      // reach this menu. Require the exact row to own ChatGPT's keyboard highlight first;
-      // otherwise move the menu highlight until it does. Keep
-      // focus on the composer, activate through the menu's real keyboard owner, then prove the exact
-      // selected connector pill below.
-      const rowHighlighted = async () => {
-        const options = { signal: abortSignal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS };
-        return await appResult.getAttribute("data-highlighted", options) !== null
-          || await appResult.getAttribute("aria-current", options) === "true";
-      };
-      if (!await rowHighlighted()) {
-        const visibleRowCount = await withBrowserTurnAbort(
-          withChatGptBrowserObservationTimeout(menuRows.filter({ visible: true }).count()),
+      const options = { signal: abortSignal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS };
+      if (await appResult.getAttribute("data-list-navigation-item", options) === "true") {
+        // Enter dismisses the current markdown mention menu without selecting its app.
+        // DOM activation also works in the launcher's clipped maintenance viewport.
+        await withBrowserTurnAbort(
+          appResult.evaluate(element => {
+            if (!(element instanceof HTMLButtonElement)) throw new Error("Connector row is not a button");
+            element.click();
+          }, undefined, options),
           abortSignal,
         );
-        for (let step = 0; step < visibleRowCount && !await rowHighlighted(); step += 1) {
-          await composer.press("ArrowDown", {
-            signal: abortSignal,
-            timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS,
-          });
+      } else {
+        const rowHighlighted = async () => (
+          await appResult.getAttribute("data-highlighted", options) !== null
+          || await appResult.getAttribute("aria-current", options) === "true"
+        );
+        if (!await rowHighlighted()) {
+          const visibleRowCount = await withBrowserTurnAbort(
+            withChatGptBrowserObservationTimeout(menuRows.filter({ visible: true }).count()),
+            abortSignal,
+          );
+          for (let step = 0; step < visibleRowCount && !await rowHighlighted(); step += 1) {
+            await composer.press("ArrowDown", options);
+          }
         }
+        if (!await rowHighlighted()) {
+          throw new Error(`ChatGPT connector menu could not highlight ${JSON.stringify(this.config.appName)}`);
+        }
+        await composer.press("Enter", options);
       }
-      if (!await rowHighlighted()) {
-        throw new Error(`ChatGPT connector menu could not highlight ${JSON.stringify(this.config.appName)}`);
-      }
-      await composer.press("Enter", {
-        signal: abortSignal,
-        timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS,
-      });
       await capture("connector-choice-activated");
       // Selecting a connector replaces the Lexical composer subtree. Resolve the active composer
       // again instead of returning the pre-selection locator, otherwise the real turn can focus a

@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { VERSION } from "../src/version";
+import { isSupportedBunVersion } from "./bun-version";
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
@@ -23,9 +24,9 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
 if (packageJson.version !== VERSION) throw new Error("package.json and runtime version are out of sync");
 const packageManagerMatch = /^bun@(\d+\.\d+\.\d+)$/.exec(packageJson.packageManager ?? "");
 if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun packageManager version");
-const expectedBunVersion = packageManagerMatch[1];
-if (Bun.version !== expectedBunVersion) {
-  throw new Error(`Runtime bundle requires Bun ${expectedBunVersion}, received ${Bun.version}`);
+const minimumBunVersion = packageManagerMatch[1]!;
+if (!isSupportedBunVersion(Bun.version, minimumBunVersion)) {
+  throw new Error(`Runtime bundle requires Bun >=${minimumBunVersion}, received ${Bun.version}`);
 }
 
 function embeddedBunExecutable(): string {
@@ -38,8 +39,8 @@ function embeddedBunExecutable(): string {
     throw new Error(`Embedded Bun validation failed: ${version.stderr.toString() || version.stdout.toString()}`);
   }
   const reported = version.stdout.toString().trim();
-  if (reported !== expectedBunVersion) {
-    throw new Error(`Embedded Bun must be ${expectedBunVersion}, received ${reported || "no version"}`);
+  if (reported !== Bun.version) {
+    throw new Error(`Embedded Bun must be ${Bun.version} (the build runtime), received ${reported || "no version"}`);
   }
   return executable;
 }

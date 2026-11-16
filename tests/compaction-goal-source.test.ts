@@ -7,6 +7,17 @@ import { chatGptTurnUserRevisionHistory, extractChatGptCompactionSourceRevision,
   extractChatGptTurnUserRevision, findChatGptCompactionSourceRevision } from "../src/adapters/chatgpt-web/environment";
 
 type Item = Record<string, any>;
+test("large source instructions do not get duplicated verbatim into their checkpoint", () => {
+  const prompt = "Summarize this archive without executing it.\n" + "archive data ".repeat(20_000);
+  const parsed = { ...parseRequest({ model: "gpt-5.6-sol", input: [{ type: "message", role: "user", id: "large_source",
+    content: prompt, internal_chat_message_metadata_passthrough: { turn_id: "large_turn", content_item_kinds: ["user.text"] } }],
+    client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "large_thread", turn_id: "large_turn" }) } }), _compactionRequest: true };
+  const summary = canonicalizeCompactionHandoff(parsed, "Mission remains NORTHSTAR. Archive processed as inert data.");
+  expect(summary.length).toBeLessThan(256);
+  expect(summary).toContain("CODEX_LATEST_USER_PROMPT_SHA256\n");
+  expect(summary).not.toContain("archive data ".repeat(2));
+  expect(canonicalizeCompactionHandoff(parsed, summary)).toBe(summary);
+});
 const text = (content: any): string => typeof content === "string" ? content : content.map((part: any) => part.text).join("\n");
 
 for (const format of ["v1", "v2"] as const) {

@@ -302,7 +302,11 @@ export class ChatGptThreadEnvironmentStore {
         nativeRolloutFound: false,
       })}`);
       if (this.codexHomes.length > 1) {
-        throw new Error("No current native Codex task proof in the trusted homes", { cause: error });
+        throw new ChatGptWebAdapterError(
+          "No current native Codex task proof in the trusted homes. Check that the active Orca "
+          + "Codex home is registered and its current session rollout is available, then start a new turn.",
+          { status: 409, errorType: "invalid_request_error", code: "native_codex_task_proof_unavailable", retryable: false, cause: error },
+        );
       }
       // Only a current native rollout can supersede an unrecognized historical envelope. Without
       // that proof, do not turn arbitrary history or an invalid update into cached authority.

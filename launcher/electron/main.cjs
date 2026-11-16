@@ -47,7 +47,7 @@ const {
   nextSessionRefreshReminderAt,
   validateSidebarState,
 } = require("./state.cjs");
-const { trustedHomesEnvironment, usableTrustedHomes, validateTrustedHomes } = require("./trusted-homes.cjs");
+const { trustedHomesEnvironment, usableTrustedHomes, validateTrustedHomes, discoverOrcaTrustedHomes } = require("./trusted-homes.cjs");
 const {
   MIN_WINDOW_BOUNDS,
   readWindowState,
@@ -1326,7 +1326,12 @@ async function start() {
   await app.whenReady();
 
   // An unusable saved list (edited by hand) leaves the default trust boundary unchanged.
-  try { applyTrustedCodexHomes(stateStore.read().trustedCodexHomes); } catch { /* default trust */ }
+  try {
+    const current = stateStore.read().trustedCodexHomes;
+    const homes = discoverOrcaTrustedHomes(current, app.getPath("appData"));
+    if (JSON.stringify(current) !== JSON.stringify(homes)) stateStore.update({ trustedCodexHomes: homes });
+    applyTrustedCodexHomes(homes);
+  } catch { /* default trust */ }
   limitsController = new LimitsController(path.join(app.getPath("userData"), "limits.json"), {
     getInteractionMode: () => stateStore.read().browserInteractionMode,
   });

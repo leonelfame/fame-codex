@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
-import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
+import { defaultBrokerEndpoint, expandUserPath, getConfigDir, resolveBrokerEndpoint } from "../../config";
+import { getTrustedCodexHomes } from "../../codex-integration-shared";
+import { COMPACT_PROMPT } from "../../responses/compaction";
 import {
   cancelLauncherManualTurn,
   endLauncherManualTurn,
@@ -22,7 +24,7 @@ import type { ProviderAdapter } from "../base";
 import { parseDataUrl } from "../image";
 import { ChatGptWebAdapterError, chatGptToolTimeoutError } from "./adapter-error";
 import { ChatGptBrowserWorker, chatGptSuspensionClock, remainingStageBudgetMs } from "./browser-worker";
-import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
+import { extractChatGptCompactionSourceRevision, extractChatGptRootThreadMetadata, extractChatGptThreadSpawnLineage, extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt } from "./prompt";
 import { createChatGptStructuredOutputValidator } from "./output-validation";
@@ -31,6 +33,9 @@ import { TurnBroker, type BrokerToolRequest, type BrokerToolResult, type TurnBro
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptInstructionLineage, chatGptThreadOwnershipKey, chatGptTurnExecutionKey, chatGptTurnRetryKey, chatGptTurnRoundKey, chatGptTurnSessions, type ChatGptBrowserOutcome, type ChatGptTraceEvent, type ChatGptTurnRuntime, type ChatGptTurnSession } from "./turn-execution";
 import { estimateChatGptWebUsage, resolveBiggerContextMultipartParts } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
+import { CompactionSourceOverflowError, MAX_COMPACTION_SOURCE_PARTS, summarizeCompleteCompaction } from "./compaction-source";
+import { opaqueNativeCheckpoints, ReadableNativeCheckpointStore, withReadableNativeCheckpoints } from "./native-checkpoint-recovery";
+import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import {
   ChatGptLunaCheckpointStore,
   type CapturedChatGptLunaCheckpoint,
@@ -425,6 +430,12 @@ export function createChatGptWebAdapter(
       ? resolve(expandUserPath(provider.chatgptWeb.lunaCheckpointStatePath))
       : undefined,
   );
+  const nativeCheckpointStore = new ReadableNativeCheckpointStore(join(
+    provider.chatgptWeb?.threadEnvironmentStatePath
+      ? dirname(resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath)))
+      : join(getConfigDir(), "runtime"),
+    "native-checkpoints",
+  ));
   const currentUsageInput = (parsed: CodexParsedRequest): CodexParsedRequest => (
     parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !experimentalBiggerContext && !parsed._compactionRequest
       ? lunaCheckpointStore.apply(parsed).parsed
@@ -860,6 +871,110 @@ export function createChatGptWebAdapter(
     };
   };
 
+  const summarizeSource = (
+    input: CodexParsedRequest,
+    options: {
+      traceIds: readonly string[];
+      signal: AbortSignal;
+      retainOwnershipUntil: (settlement: Promise<void>) => void;
+      onProgress?: (kind: "generation" | "submitted" | "multipart_acknowledged", part?: number) => void;
+      environment?: ReturnType<typeof extractChatGptTurnEnvironment>;
+    },
+  ): Promise<string> => {
+    const manual = isChatGptWebZeroRiskBackendModel(input.modelId);
+    const capabilities = manual ? configuredCapabilities : { ...configuredCapabilities, localToolsEnabled: false };
+    return summarizeCompleteCompaction(input, {
+      signal: options.signal,
+      fits: part => {
+        try {
+          compileChatGptWebPrompt(part, capabilities, manual ? `turn_${"0".repeat(32)}` : undefined, {
+            appName: worker.appName,
+            ...(manual ? { manualControl: true } : experimentalBiggerContext ? { experimentalMultipartParts: 6 } : {}),
+          });
+          return true;
+        } catch (error) {
+          if (error instanceof CompactionSourceOverflowError) return false;
+          throw error;
+        }
+      },
+      summarize: async (part, index) => {
+        const traceId = options.traceIds[index];
+        if (!traceId) throw new Error("Compaction source has no registered browser owner");
+        options.signal.throwIfAborted();
+        const runtime = startRuntime(part, options.environment, traceId, capabilities, { onCompactionProgress: options.onProgress });
+        options.retainOwnershipUntil(runtime.physicalSettlement);
+        const cancel = () => runtime.cancel(options.signal.reason instanceof Error
+          ? options.signal.reason : new DOMException("Compaction aborted", "AbortError"));
+        options.signal.addEventListener("abort", cancel, { once: true });
+        if (options.signal.aborted) cancel();
+        try {
+          const summary = await withAbort(runtime.browser, options.signal);
+          await withAbort(runtime.physicalSettlement, options.signal);
+          return summary;
+        } catch (error) {
+          runtime.cancel(error instanceof Error ? error : new Error(String(error)));
+          throw error;
+        } finally {
+          options.signal.removeEventListener("abort", cancel);
+        }
+      },
+    });
+  };
+
+  const recoverNativeCheckpoints = async (input: CodexParsedRequest): Promise<CodexParsedRequest> => {
+    const checkpoints = opaqueNativeCheckpoints(input);
+    if (!checkpoints.length) return input;
+    const identity = extractChatGptTurnIdentity(input);
+    const lineage = extractChatGptThreadSpawnLineage(input) ?? extractChatGptRootThreadMetadata(input);
+    if (!identity.threadId || !identity.turnId || !lineage) throw new Error("Native checkpoint recovery requires current native thread and turn proof");
+    const threadId = identity.threadId;
+    const turnId = identity.turnId;
+    const homes = getTrustedCodexHomes();
+    const compactionSourceTurnId = input._compactionRequest
+      ? extractChatGptCompactionSourceRevision(input).turnId : undefined;
+    const readSources = () => {
+      const rollout = resolveCurrentCodexRolloutEnvironment({
+        codexHome: homes[0]!, additionalCodexHomes: homes.slice(1), lineage, turnId,
+        tools: input.context.tools, checkpointSources: checkpoints,
+        ...(compactionSourceTurnId ? { compactionSourceTurnId } : {}),
+      });
+      if (!rollout?.checkpointSources || rollout.checkpointSources.length !== checkpoints.length) {
+        throw new Error("Current native checkpoint has no complete readable source in the trusted homes");
+      }
+      return rollout.checkpointSources;
+    };
+    const sources = readSources();
+    const summaries: string[] = [];
+    for (const source of sources) {
+      let summary = nativeCheckpointStore.get(threadId, source.encryptedContent, source.sourceHash);
+      if (summary === undefined) {
+        const key = `${executionNamespace}:${threadId}:${turnId}:native-checkpoint:${source.sourceHash}`;
+        const traceRoot = createHash("sha256").update(key).digest("hex").slice(0, 12);
+        const traceIds = Array.from({ length: MAX_COMPACTION_SOURCE_PARTS }, (_, part) => `${traceRoot}_native_${part}`);
+        summary = await runStructuredCompactionOnce(key, {
+          ownerKey: `${executionNamespace}:${threadId}:native-checkpoint`, traceIds,
+          nativeThreadId: threadId, nativeTurnId: turnId,
+        }, async (operatorSignal, retainOwnershipUntil) => {
+          const signal = AbortSignal.any([operatorSignal, AbortSignal.timeout(MAX_COMPACTION_HANDOFF_TIMEOUT_MS * 4)]);
+          const recovered = await summarizeSource({
+            ...input, _compactionRequest: true,
+            context: { ...input.context, messages: [
+              ...source.messages,
+              { role: "user", content: COMPACT_PROMPT, timestamp: Date.now() },
+            ] },
+          }, { traceIds, signal, retainOwnershipUntil });
+          signal.throwIfAborted();
+          const current = readSources().find(candidate => candidate.encryptedContent === source.encryptedContent);
+          if (!current || current.sourceHash !== source.sourceHash) throw new Error("Native checkpoint source changed during recovery");
+          nativeCheckpointStore.set(threadId, source.encryptedContent, source.sourceHash, recovered);
+          return recovered;
+        });
+      }
+      summaries.push(summary);
+    }
+    return withReadableNativeCheckpoints(input, summaries);
+  };
+
   return {
     name: "chatgpt-web",
     async runTurn(parsed, incoming, emit) {
@@ -929,7 +1044,27 @@ export function createChatGptWebAdapter(
             console.warn(
               `[chatgpt-web] trusted environment unavailable (thread_id=${identity.threadId ? "present" : "missing"}, turn_id=${identity.turnId ? "present" : "missing"}, previous_response_id=${parsed.previousResponseId ?? "none"}, replay_prefix_items=${parsed._replayPrefixLen ?? 0}, context_messages=${parsed.context.messages.length})`,
             );
+            if (error instanceof ChatGptWebAdapterError && error.code === "native_codex_task_proof_unavailable") {
+              emit({
+                type: "error", message: error.message, status: error.status,
+                errorType: error.errorType, code: error.code, retryable: error.retryable,
+              });
+              return;
+            }
             throw error;
+          }
+        }
+        if (!manualRequest) {
+          try {
+            parsed = await withAbort(recoverNativeCheckpoints(parsed), incoming.abortSignal);
+          } catch (error) {
+            if (incoming.abortSignal?.aborted) throw error;
+            emit({
+              type: "error", status: 409, errorType: "invalid_request_error",
+              code: "native_checkpoint_source_unavailable", retryable: false,
+              message: `Cannot recover the complete native checkpoint: ${error instanceof Error ? error.message : String(error)}`,
+            });
+            return;
           }
         }
         if (parsed._compactionRequest) {
@@ -961,6 +1096,8 @@ export function createChatGptWebAdapter(
               .digest("hex")
               .slice(0, 12);
             const freshCompactionTraceId = `${handoffTraceId}_${freshConversationPerTurn ? "fresh" : "fallback"}`;
+            const sourceTraceIds = Array.from({ length: MAX_COMPACTION_SOURCE_PARTS }, (_, part) =>
+              part === 0 ? freshCompactionTraceId : `${freshCompactionTraceId}_${part}`);
             const compactionNativeIdentity = extractChatGptTurnIdentity(parsed);
             let sharedSummary = existingStructuredCompactionRun(compactionExecutionKey);
             if (!sharedSummary) {
@@ -971,7 +1108,7 @@ export function createChatGptWebAdapter(
                   traceIds: [
                     compactionTraceId,
                     handoffTraceId,
-                    freshCompactionTraceId,
+                    ...sourceTraceIds,
                   ],
                   ...(compactionNativeIdentity.threadId
                     ? { nativeThreadId: compactionNativeIdentity.threadId }
@@ -1045,40 +1182,36 @@ export function createChatGptWebAdapter(
                     // and the final accepted compact prompt re-arms the five-minute liveness budget;
                     // transport time cannot consume the model-generation window.
                     armHandoffDeadline();
-                    const fallbackRuntime = startRuntime(
-                      parsed,
-                      manualRequest ? environment : undefined,
-                      freshCompactionTraceId,
-                      turnCapabilities,
-                      { onCompactionProgress: armHandoffDeadline },
-                    );
-                    retainOwnershipUntil(fallbackRuntime.physicalSettlement);
-                    try {
-                      const rawSummary = await withAbort(fallbackRuntime.browser, operationSignal);
-                      await withAbort(fallbackRuntime.physicalSettlement, operationSignal);
-                      return canonicalizeCompactionHandoff(parsed, rawSummary);
-                    } catch (error) {
-                      fallbackRuntime.cancel(error instanceof Error ? error : new Error(String(error)));
-                      // The shared owner retains physical settlement independently of this error.
-                      // Neither a timeout nor operator cancellation can open a competing trace.
-                      throw error;
-                    }
+                    const rawSummary = await summarizeSource(parsed, {
+                      traceIds: sourceTraceIds,
+                      signal: operationSignal,
+                      retainOwnershipUntil,
+                      onProgress: armHandoffDeadline,
+                      environment: manualRequest ? environment : undefined,
+                    });
+                    return canonicalizeCompactionHandoff(parsed, rawSummary);
                   };
                   let source: ChatGptTurnSession | undefined;
                   let stopSourceProgress: (() => void) | undefined;
                   let preserveFinalResponse = false;
                   try {
-                    if (freshConversationPerTurn) {
+                    if (freshConversationPerTurn || !manualRequest && opaqueNativeCheckpoints(parsed).length > 0) {
                       // Full native history is the compaction input. Release an unfinished
                       // browser/tool owner before rebuilding it, but keep a committed final
                       // replayable if it won the native compaction race.
-                      const previous = chatGptTurnSessions.find(compactedSourceExecutionKey);
-                      const settlement = previous?.settledOutcome()?.type === "final"
-                        ? previous.physicalSettlement
-                        : chatGptTurnSessions.retireAndWait(compactedSourceExecutionKey).then(() => {});
+                      const head = sourceConversationKey ? chatGptTurnSessions.findConversationHead(sourceConversationKey) : undefined;
+                      const previous = head ?? chatGptTurnSessions.find(compactedSourceExecutionKey);
+                      const settlement = head && sourceConversationKey
+                        ? head.settledOutcome()?.type === "final"
+                          ? chatGptTurnSessions.retireConversationPreservingFinalResponse(sourceConversationKey, head, compactedSourceExecutionKey).then(() => {})
+                          : chatGptTurnSessions.retireConversationAndWait(sourceConversationKey).then(() => {})
+                        : previous?.settledOutcome()?.type === "final"
+                          ? previous.physicalSettlement
+                          : chatGptTurnSessions.retireAndWait(compactedSourceExecutionKey).then(() => {});
                       retainOwnershipUntil(settlement);
                       await withAbort(settlement, operationSignal);
-                      return await runFreshCompaction("configured_fresh_conversation");
+                      return await runFreshCompaction(freshConversationPerTurn
+                        ? "configured_fresh_conversation" : "native_checkpoint_requires_complete_source");
                     }
                     // The previous compaction may already have detached the retained head while
                     // its browser/helper is still unwinding. Do not inspect that old epoch or

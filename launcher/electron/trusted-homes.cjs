@@ -41,4 +41,27 @@ function trustedHomesEnvironment(homes) {
   return value;
 }
 
-module.exports = { validateTrustedHomes, usableTrustedHomes, trustedHomesEnvironment };
+function discoverOrcaTrustedHomes(homes, appDataDirectory) {
+  const merged = usableTrustedHomes(homes);
+  const accounts = path.join(appDataDirectory, "orca", "codex-accounts");
+  let entries;
+  try {
+    if (fs.lstatSync(accounts).isSymbolicLink()) return merged;
+    entries = fs.readdirSync(accounts, { withFileTypes: true });
+  } catch { return merged; }
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (merged.length >= MAX_TRUSTED_HOMES) break;
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const home = path.join(accounts, entry.name, "home");
+    try {
+      if (fs.lstatSync(home).isSymbolicLink()
+        || fs.lstatSync(path.join(home, "sessions")).isSymbolicLink()) continue;
+      const candidate = validateTrustedHomes([...merged, home]);
+      trustedHomesEnvironment(candidate);
+      merged.splice(0, merged.length, ...candidate);
+    } catch { /* Skip incomplete accounts, duplicates and paths exceeding the runtime budget. */ }
+  }
+  return merged;
+}
+
+module.exports = { validateTrustedHomes, usableTrustedHomes, trustedHomesEnvironment, discoverOrcaTrustedHomes };

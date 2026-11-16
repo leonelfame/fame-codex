@@ -70,7 +70,11 @@ export const CHATGPT_WEB_ZERO_RISK_PRO_CONTEXT_WINDOW =
   CHATGPT_WEB_PRO_MODEL_CONTEXT_WINDOW * 3;
 export const CHATGPT_WEB_ZERO_RISK_PRO_AUTO_COMPACT_TOKEN_LIMIT =
   CHATGPT_WEB_PRO_AUTO_COMPACT_TOKEN_LIMIT * 3;
-export const CHATGPT_WEB_PRO_INSTANT_COMPOSER_CHAR_LIMIT = 545_000;
+// A visible Pro model does not guarantee the larger Instant composer allowance. On
+// 2026-11-15 the launcher's workspace account disabled Send at 220k characters,
+// including plain ASCII, while 211,256 remained enabled. Use the shared safe bound
+// so multipart staging selects a reasoning mode before attaching oversized text.
+export const CHATGPT_WEB_PRO_INSTANT_COMPOSER_CHAR_LIMIT = CHATGPT_WEB_INSTANT_COMPOSER_CHAR_LIMIT;
 // Rechecked 2026-09-19: Pro-account Medium/High accept 500k characters but the server
 // rejects larger messages with HTTP 413 (message_length_exceeds_limit), even below
 // the token budget. Composer insertion itself still accepts them. Keep headroom;
@@ -277,19 +281,20 @@ export function resolveChatGptWebMessageTokenBudget(
   ));
 }
 
-/** Keep repeated Plus Instant uploads within the ordinary pre-compaction input target. */
+/** Keep Instant uploads within a budget verified independently of Pro model availability. */
 export function resolveChatGptWebStagingTokenBudget(
   backendModel: ChatGptWebAutomaticBackendModel,
   effort: ChatGptWebAdapterEffort,
   capabilities: ChatGptWebAccountCapabilities,
 ): number {
   const messageBudget = resolveChatGptWebMessageTokenBudget(backendModel, effort, capabilities);
-  if (backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL || effort !== "low" || capabilities.proAvailable) return messageBudget;
+  if (backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL || effort !== "low") return messageBudget;
   // A first near-maximum Instant message can succeed while the next is rejected (#777).
+  // Pro model availability does not establish a larger Instant allowance on workspace accounts.
   // Reuse normal Instant's input headroom, including the existing platform reserve;
   // this changes staging allocation, not the selected model's advertised context window.
   const { autoCompactTokenLimit } = resolveChatGptWebContextLimits(backendModel, effort, {
-    ...capabilities, experimentalBiggerContext: false,
+    ...capabilities, proAvailable: false, experimentalBiggerContext: false,
   });
   return Math.min(messageBudget, Math.max(0, autoCompactTokenLimit - CHATGPT_WEB_PLATFORM_RESERVE_TOKENS - 1));
 }

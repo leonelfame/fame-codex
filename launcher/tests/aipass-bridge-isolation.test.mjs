@@ -260,3 +260,26 @@ test('isolated requests reject unsupported video and repeated upstream IDs', asy
   await f.created(await f.next(), 'duplicate');
   assert.equal((await second).status, 502);
 });
+
+test('model identity reports an Auto upstream model separately and rejects named-model fallback', async t => {
+  const f = await fixture(t);
+  for (const model of ['auto', 'claude-opus-5-5@azure']) {
+    const pending = f.post('/v1/chat/isolated', { ...chatBody, model, stream: true });
+    const create = await f.next(); await f.created(create, `identity-${model}`);
+    const chat = await f.next();
+    await f.post('/ext/chunk', { jobId: chat.jobId, parts: [{ kind: 'model', text: JSON.stringify({ requestedModel: model, upstreamModel: 'gemini-3.5-flash-lite', reason: 'credit_not_enough' }) }] });
+    if (model === 'auto') {
+      await f.post('/ext/chunk', { jobId: chat.jobId, parts: [{ kind: 'text', text: 'AUTO_OK' }] });
+      await f.post('/ext/done', { jobId: chat.jobId });
+    }
+    const text = await (await pending).text();
+    if (model === 'auto') {
+      assert.match(text, /"requested_model":"auto"/);
+      assert.match(text, /"upstream_model":"gemini-3.5-flash-lite"/);
+      assert.match(text, /AUTO_OK/);
+    } else {
+      assert.match(text, /AIPASS_MODEL_MISMATCH requested=claude-opus-5-5@azure actual=gemini-3.5-flash-lite reason=credit_not_enough/);
+      assert.doesNotMatch(text, /AUTO_OK/);
+    }
+  }
+});

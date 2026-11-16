@@ -346,6 +346,7 @@ export function parseRequest(body: unknown): CodexParsedRequest {
         messages.push({
           role: "user",
           content: compactionItemToText(typeof encrypted === "string" ? encrypted : undefined),
+          ...(typeof encrypted === "string" ? { compactionSource: { encryptedContent: encrypted } } : {}),
           timestamp: now,
         });
         continue;

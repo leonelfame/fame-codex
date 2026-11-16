@@ -160,6 +160,15 @@ describe("explicit trusted Codex homes (#851)", () => {
   test("complete envelopes still require current native ownership", () => {
     const parsed = request({ mode: "danger-full-access" });
     expect(() => sharedStore().resolve(parsed)).toThrow("No current native Codex task proof");
+    try {
+      sharedStore().resolve(parsed);
+      throw new Error("Expected missing native proof");
+    } catch (error) {
+      expect(error).toMatchObject({
+        status: 409, errorType: "invalid_request_error",
+        code: "native_codex_task_proof_unavailable", retryable: false,
+      });
+    }
     rollout(secondary, { mode: "danger-full-access" });
     expect(sharedStore().resolve(parsed).sandboxPolicy).toEqual({ type: "dangerFullAccess" });
     expect(() => sharedStore().resolve(request({ mode: "danger-full-access", currentTurn: otherId })))

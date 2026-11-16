@@ -13,9 +13,10 @@ import {
   supportsChatGptWebBiggerContext,
 } from "../../chatgpt-web-models";
 import { ChatGptWebAdapterError } from "./adapter-error";
+import { CompactionSourceOverflowError } from "./compaction-source";
 import { restoreCompactionTaskMessages } from "./compaction-continuation";
 import { chatGptTurnUserRevisionHistory, extractChatGptTurnIdentity } from "./environment";
-import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
+import { compiledChatGptWebMessages, estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { estimateTokens } from "../../lib/token-estimate";
 import type { CodexAssistantContentPart, CodexContentPart, CodexMessage, CodexParsedRequest } from "../../types";
 import { isOnePixelPngDataUrl, isReadableCompactionSummaryText } from "../../responses/compaction";
@@ -662,7 +663,7 @@ export function compileChatGptWebPrompt(
       "</codex_transport_resume>",
     ];
   const backendModel = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_MODEL_ID : CHATGPT_WEB_MODEL_ID;
-  const build = (sourceMessages: readonly CodexMessage[], omittedMessages = 0): CompiledChatGptWebPrompt => {
+  const build = (sourceMessages: readonly CodexMessage[]): CompiledChatGptWebPrompt => {
     const images: ChatGptWebPromptImage[] = [];
     const budget: ImageBudget = {
       seen: 0,
@@ -690,15 +691,7 @@ export function compileChatGptWebPrompt(
     const answerContract = captureLunaCheckpoint
       ? "Return the complete answer that the outer Codex task should receive, then the required private checkpoint tail."
       : "Return only the answer that the outer Codex task should receive.";
-    const resume = omittedMessages > 0 ? [
-      "<codex_transport_resume>",
-      `${omittedMessages} earlier history items were omitted to fit this compaction request; the supplied history is incomplete.`,
-      "Preserve still-relevant progress, constraints and pending work from any supplied cumulative checkpoint and the remaining evidence. Do not infer that omitted work was never done or invent missing details.",
-      manualControl
-        ? "Produce the requested checkpoint summary now."
-        : "Produce the requested checkpoint summary now without calling tools.",
-      "</codex_transport_resume>",
-    ] : transportResume;
+    const resume = transportResume;
     if (multipartEnabled) {
       const records: MultipartContextRecord[] = [
         ...system.map((content, system_index) => ({ kind: "system" as const, system_index, content })),
@@ -788,11 +781,10 @@ export function compileChatGptWebPrompt(
     return { text, images, ...attachments };
   };
 
-  let sourceMessages = withoutSupersededModelSwitchContracts(restoreCompactionTaskMessages(
+  const sourceMessages = withoutSupersededModelSwitchContracts(restoreCompactionTaskMessages(
     parsed, extractChatGptTurnIdentity(parsed), chatGptTurnUserRevisionHistory(parsed),
   ));
-  const initialMessageCount = sourceMessages.length;
-  let compiled = build(sourceMessages);
+  const compiled = build(sourceMessages);
   if (!parsed._compactionRequest) return compiled;
 
   // Match browser-worker's exclusive transaction ceiling, including wrappers, acknowledgements,
@@ -809,32 +801,24 @@ export function compileChatGptWebPrompt(
     ? estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId) >= multipartTokenBudget!
     : chatGptPromptJsonBytes(compiled.text) > CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET;
 
-  // A cumulative checkpoint may be the only remaining account of earlier work. Preserve the
-  // newest one and the final compaction instruction; trim other history in its original order.
-  let checkpointIndex = sourceMessages.findLastIndex(message =>
-    message.role === "user" && isReadableCompactionSummaryText(plainMessageText(message))
-  );
-  while (exceedsCompactionBudget() && sourceMessages.length > 1) {
-    const discardIndex = checkpointIndex === 0 ? 1 : 0;
-    if (discardIndex === sourceMessages.length - 1) break;
-    sourceMessages.splice(discardIndex, 1);
-    if (checkpointIndex > discardIndex) checkpointIndex -= 1;
-    // Rebuild attachments and count the omission notice inside the same transport budget.
-    compiled = build(sourceMessages, initialMessageCount - sourceMessages.length);
-  }
   if (exceedsCompactionBudget()) {
-    if (compiled.multipart) {
-      const inputTokens = estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId);
-      throw new ChatGptWebAdapterError(
-        `ChatGPT Web compaction still requires ${inputTokens.toLocaleString("en-US")} input tokens after other history was trimmed; the required system context, ${checkpointIndex >= 0 ? "cumulative checkpoint, and " : ""}final compaction instruction cannot fit below the ${multipartTokenBudget!.toLocaleString("en-US")}-token ${compiled.multipart.parts.length === 2 ? "two-part" : "six-part"} ceiling. Reduce the required context before retrying.`,
-        { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
-      );
-    }
-    const encodedBytes = chatGptPromptJsonBytes(compiled.text);
-    throw new Error(
-      `ChatGPT Web compaction prompt still requires ${encodedBytes.toLocaleString("en-US")} JSON bytes after other history was trimmed; ${checkpointIndex >= 0 ? "the cumulative checkpoint and final compaction instruction exceed" : "the final compaction instruction alone exceeds"} the browser compaction budget`,
-    );
+    throw new CompactionSourceOverflowError();
   }
-  const trimmedCompactionMessages = initialMessageCount - sourceMessages.length;
-  return trimmedCompactionMessages > 0 ? { ...compiled, trimmedCompactionMessages } : compiled;
+  if (compiled.multipart) {
+    const messages = compiledChatGptWebMessages(compiled);
+    const stagingEffort = backendModel === CHATGPT_WEB_LUNA_MODEL_ID ? "low" : capabilities.proAvailable ? "max" : "medium";
+    for (const [index, message] of messages.entries()) {
+      const final = index === messages.length - 1;
+      const effort = final ? mode.effort : stagingEffort;
+      const limits = resolveChatGptWebTransportLimits(backendModel, effort, capabilities);
+      const imageTokens = final ? compiled.images.reduce((total, image) => total + chatGptWebImageTokenReserve(image.detail), 0) : 0;
+      const tokens = final
+        ? resolveChatGptWebMessageTokenBudget(backendModel, effort, capabilities, imageTokens + skillFileTokens(compiled.skillFiles, parsed.modelId))
+        : resolveChatGptWebStagingTokenBudget(backendModel, effort, capabilities);
+      if (message.length > (limits.browserComposerCharLimit ?? Infinity) || estimateTokens(message, parsed.modelId) > tokens) {
+        throw new CompactionSourceOverflowError();
+      }
+    }
+  }
+  return compiled;
 }

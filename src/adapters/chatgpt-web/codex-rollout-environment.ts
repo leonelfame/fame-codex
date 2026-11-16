@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -21,6 +22,7 @@ import type {
   ChatGptTurnEnvironment,
   ChatGptUnattributedEnvironmentMessage,
 } from "./environment";
+import { recoverNativeCheckpointSources, type NativeCheckpointRequest, type NativeCheckpointSource } from "./native-checkpoint-source";
 
 type RolloutIdentity = ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
 
@@ -30,6 +32,7 @@ export interface CodexRolloutEnvironment {
   /** Native model-visible projection; never used to grant execution permissions. */
   filesystemProfileXml?: string;
   rolloutPath: string;
+  checkpointSources?: readonly NativeCheckpointSource[];
 }
 
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -37,6 +40,78 @@ const CODEX_ID = new RegExp(`^${CODEX_ID_SOURCE}$`, "i");
 const ROLLOUT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_ROLLOUT_JSON_LINE_BYTES = 16 * 1024 * 1024;
 const MAX_ROLLOUT_DIRECTORY_ENTRIES = 100_000;
+const MAX_CHECKPOINT_SNAPSHOT_BYTES = 512 * 1024 * 1024;
+
+function checkpointSnapshot(fd: number, size: number): Buffer {
+  if (size > MAX_CHECKPOINT_SNAPSHOT_BYTES) throw new Error("Native checkpoint source exceeds the bounded snapshot size");
+  const snapshot = Buffer.alloc(size);
+  for (let position = 0; position < size;) {
+    const length = Math.min(ROLLOUT_READ_CHUNK_BYTES, size - position);
+    if (readSync(fd, snapshot, position, length, position) !== length) {
+      throw new Error("Codex rollout changed during checkpoint source recovery");
+    }
+    position += length;
+  }
+  return snapshot;
+}
+
+function checkpointAncestrySnapshot(
+  snapshot: Buffer,
+  homes: readonly string[],
+  ownerHome: string,
+  threadId: string,
+  ancestors = new Set<string>(),
+): Buffer {
+  if (ancestors.size >= 16 || ancestors.has(threadId)) throw new Error("Native checkpoint ancestry is cyclic or too deep");
+  const newline = snapshot.indexOf(0x0a);
+  if (newline < 0) throw new Error("Native checkpoint ancestry has no complete session metadata");
+  const first = record(JSON.parse(snapshot.subarray(0, newline).toString("utf8")));
+  const session = record(first?.payload);
+  if (first?.type !== "session_meta" || session?.id !== threadId) throw new Error("Native checkpoint ancestry has conflicting session metadata");
+  if (first.ordinal === 0) return snapshot;
+  const base = record(session.history_base);
+  const parentId = session.forked_from_id;
+  const end = base?.end_ordinal_exclusive;
+  const bytes = base?.end_byte_offset;
+  if (typeof parentId !== "string" || !CODEX_ID.test(parentId) || base?.thread_id !== parentId
+    || !Number.isSafeInteger(end) || typeof end !== "number" || end <= 0 || end !== first.ordinal
+    || session.forked_from_ordinal_exclusive !== end || !Number.isSafeInteger(bytes) || typeof bytes !== "number" || bytes <= 0) {
+    throw new Error("Native checkpoint fork has no complete native history-base proof");
+  }
+  const candidates = homes.flatMap(home => scanCanonicalRollouts(home, parentId).map(path => ({ home, path })));
+  if (candidates.length !== 1 || pathIdentity(candidates[0]!.home) !== pathIdentity(ownerHome)) {
+    throw new Error("Native checkpoint fork ancestry has no unique owner in its trusted home");
+  }
+  const parentPath = validateRolloutPath(ownerHome, candidates[0]!.path, parentId);
+  const fd = openSync(parentPath, "r");
+  try {
+    const initial = fstatSync(fd);
+    if (initial.size < bytes) throw new Error("Native checkpoint fork prefix is incomplete");
+    const prefix = checkpointSnapshot(fd, bytes);
+    const parent = record(firstRolloutRecord(fd, bytes).payload);
+    if (parent?.id !== parentId || parent.account_scoped !== session.account_scoped
+      || parent.creator_user_id !== session.creator_user_id || parent.creator_account_id !== session.creator_account_id) {
+      throw new Error("Native checkpoint fork ancestry belongs to another native account");
+    }
+    const previous = new Set(ancestors);
+    previous.add(threadId);
+    const expanded = checkpointAncestrySnapshot(prefix, homes, ownerHome, parentId, previous);
+    const lastLine = expanded.toString("utf8").trimEnd().split("\n").at(-1);
+    if (!lastLine || record(JSON.parse(lastLine))?.ordinal !== end - 1) throw new Error("Native checkpoint fork prefix does not match its ordinal boundary");
+    const unchanged = checkpointSnapshot(fd, bytes).equals(prefix);
+    const current = fstatSync(fd);
+    const named = lstatSync(parentPath);
+    if (!unchanged || current.dev !== initial.dev || current.ino !== initial.ino || current.size < bytes
+      || !named.isFile() || named.isSymbolicLink() || named.dev !== initial.dev || named.ino !== initial.ino) {
+      throw new Error("Native checkpoint fork ancestry changed during recovery");
+    }
+    const boundary = Buffer.from(JSON.stringify({ ...first, type: "fork_boundary" }) + "\n");
+    if (expanded.length + boundary.length + snapshot.length - newline - 1 > MAX_CHECKPOINT_SNAPSHOT_BYTES) {
+      throw new Error("Native checkpoint ancestry exceeds the bounded snapshot size");
+    }
+    return Buffer.concat([expanded, boundary, snapshot.subarray(newline + 1)]);
+  } finally { closeSync(fd); }
+}
 
 type IndexedRollout =
   | { kind: "unavailable" }
@@ -205,7 +280,7 @@ function firstRolloutRecord(fd: number, size: number): Record<string, unknown> {
 function latestRolloutPayload(
   fd: number,
   size: number,
-  type: "turn_context" | "compacted" | "world_state",
+  type: "turn_context" | "compacted" | "world_state" | "event_msg" | "response_item",
   matches: (payload: Record<string, unknown> | undefined) => boolean = () => true,
 ): Record<string, unknown> | undefined {
   let position = size;
@@ -715,11 +790,13 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
   tools?: readonly CodexTool[];
   historicalEnvironmentMessages?: ChatGptUnattributedEnvironmentMessage[];
   compactedEnvironmentItems?: Record<string, unknown>[];
+  checkpointSources?: readonly NativeCheckpointRequest[];
 }): CodexRolloutEnvironment | undefined {
   const { codexHome, lineage, turnId, tools, compactionSourceTurnId } = options;
+  const recoveringSource = (options.checkpointSources?.length ?? 0) > 0;
   const nativeThreadId = CODEX_ID.test(lineage.threadId);
   const nativeTurnId = CODEX_ID.test(turnId);
-  if (!nativeThreadId && !nativeTurnId) return undefined;
+  if (!nativeThreadId && !nativeTurnId && !recoveringSource) return undefined;
   if (!nativeThreadId || !nativeTurnId || (compactionSourceTurnId !== undefined && !CODEX_ID.test(compactionSourceTurnId))
     || ("parentThreadId" in lineage && !CODEX_ID.test(lineage.parentThreadId))) {
     throw new Error("Codex thread metadata contains an invalid native identifier");
@@ -737,6 +814,7 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
   if (owners.length > 1) throw new Error("Codex thread exists in multiple trusted homes");
   const owner = owners[0];
   if (!owner) {
+    if (recoveringSource) throw new Error("Native checkpoint source requires current native rollout proof");
     if (!("parentThreadId" in lineage)) return undefined;
     throw new Error("Codex has no canonical rollout for the requested subagent thread");
   }
@@ -746,8 +824,10 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
     const rolloutPath = validateRolloutPath(owner.home, candidate, lineage.threadId);
     const fd = openSync(rolloutPath, "r");
     try {
-      const size = fstatSync(fd).size;
+      const initialStat = fstatSync(fd);
+      const size = initialStat.size;
       if (!Number.isSafeInteger(size) || size <= 0) throw new Error("Codex rollout is empty");
+      const snapshot = recoveringSource ? checkpointSnapshot(fd, size) : undefined;
       const session = firstRolloutRecord(fd, size);
       validateSessionMeta(session, lineage);
       const sessionPayload = record(session.payload)!;
@@ -755,7 +835,20 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
         ? undefined : absolutePaths(sessionPayload.runtime_workspace_roots, "runtime_workspace_roots");
       const latest = latestRolloutPayload(fd, size, "turn_context");
       if (!latest) throw new Error("Codex rollout has no complete turn context");
-      if (latest.turn_id !== turnId && (compactionSourceTurnId === undefined || latest.turn_id !== compactionSourceTurnId)) {
+      // A failed pre-turn compact leaves an instruction but no new turn_context.
+      // Read-only checkpoint recovery can bind the next attempt to the live native task
+      // and its latest persisted instruction without treating either as new permissions.
+      const liveCompactionTask = recoveringSource && compactionSourceTurnId !== undefined
+        ? latestRolloutPayload(fd, size, "event_msg", payload => payload?.type === "task_started" || payload?.type === "task_complete")
+        : undefined;
+      const latestInstruction = liveCompactionTask?.type === "task_started" && liveCompactionTask.turn_id === turnId
+        ? latestRolloutPayload(fd, size, "response_item", payload => payload?.type === "message" && payload.role === "user")
+        : undefined;
+      const liveCheckpointCompaction = latestInstruction !== undefined
+        && record(latestInstruction.internal_chat_message_metadata_passthrough)?.turn_id === compactionSourceTurnId;
+      if (latest.turn_id !== turnId && !liveCheckpointCompaction
+        && (compactionSourceTurnId === undefined || latest.turn_id !== compactionSourceTurnId)) {
+        console.warn(`[chatgpt-web] native_turn_proof_mismatch ${JSON.stringify({ threadId: lineage.threadId, requestedTurnId: turnId, latestTurnId: latest.turn_id, compactionSourceTurnId, recoveringSource })}`);
         if (owner.indexed.kind === "found") {
           throw new Error("Latest Codex rollout turn context does not belong to the requested turn");
         }
@@ -771,7 +864,24 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
         verifyCompactedEnvironmentItems(fd, size, options.compactedEnvironmentItems);
       }
       const filesystemProfileXml = renderFilesystemProfile(latest.permission_profile, environment.roots);
-      matching.push({ environment, workspaceRootsDeclared, filesystemProfileXml, rolloutPath });
+      const checkpointSources = snapshot && options.checkpointSources
+        ? recoverNativeCheckpointSources({
+          snapshot: checkpointAncestrySnapshot(snapshot, [codexHome, ...(options.additionalCodexHomes ?? [])], owner.home, lineage.threadId),
+          requests: options.checkpointSources, ownerIdentity: pathIdentity(owner.home),
+          threadId: lineage.threadId, turnId: latest.turn_id as string,
+        }) : undefined;
+      if (snapshot) {
+        const unchangedBytes = createHash("sha256").update(snapshot).digest().equals(
+          createHash("sha256").update(checkpointSnapshot(fd, size)).digest(),
+        );
+        const finalStat = fstatSync(fd);
+        const pathStat = lstatSync(rolloutPath);
+        const unchanged = finalStat.dev === initialStat.dev && finalStat.ino === initialStat.ino
+          && finalStat.size === size && finalStat.mtimeMs === initialStat.mtimeMs && finalStat.ctimeMs === initialStat.ctimeMs
+          && pathStat.isFile() && !pathStat.isSymbolicLink() && pathStat.dev === initialStat.dev && pathStat.ino === initialStat.ino;
+        if (!unchanged || !unchangedBytes) throw new Error("Codex rollout changed during checkpoint source recovery");
+      }
+      matching.push({ environment, workspaceRootsDeclared, filesystemProfileXml, rolloutPath, ...(checkpointSources ? { checkpointSources } : {}) });
     } finally {
       closeSync(fd);
     }

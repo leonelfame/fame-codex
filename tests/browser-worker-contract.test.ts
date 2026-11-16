@@ -3725,7 +3725,11 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
     81_808,
     300_000,
   )).toThrow("No ChatGPT effort");
-  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 100_000, 500_000).effort).toBe("low");
+  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 100_000, 500_000).effort).toBe("medium");
+  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 86_127, 269_759).effort).toBe("medium");
+  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 86_127, 211_256).effort).toBe("medium");
+  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 68_554, 165_547).effort).toBe("medium");
+  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 23_807, 165_547).effort).toBe("low");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 100_000, 600_000).effort).toBe("max");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 104_000, 1_200_000).effort).toBe("max");
   expect(resolveChatGptWebMultipartStagingMode(

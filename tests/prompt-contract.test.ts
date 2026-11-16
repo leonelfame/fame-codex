@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { CompactionSourceOverflowError, partitionCompactionSource } from "../src/adapters/chatgpt-web/compaction-source";
 import {
   CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET,
   CHATGPT_BIGGER_CONTEXT_PARTS,
@@ -27,6 +28,37 @@ function request(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): CodexP
     stream: true,
     options: { reasoning },
   };
+}
+
+const compactionCapabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
+
+function compileInlineSourceParts(input: CodexParsedRequest) {
+  const before = structuredClone(input);
+  expect(() => compileChatGptWebPrompt(input, compactionCapabilities)).toThrow("complete history");
+  const parts = partitionCompactionSource(input, source => {
+    try {
+      compileChatGptWebPrompt(source, compactionCapabilities);
+      return true;
+    } catch (error) {
+      if (error instanceof CompactionSourceOverflowError) return false;
+      throw error;
+    }
+  });
+  expect(parts.length).toBeGreaterThan(1);
+  const compiled = parts.map(source => {
+    const result = compileChatGptWebPrompt(source, compactionCapabilities);
+    expect(chatGptPromptJsonBytes(result.text)).toBeLessThanOrEqual(CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET);
+    expect(result.trimmedCompactionMessages).toBeUndefined();
+    expect(result.text).not.toContain("history is incomplete");
+    expect(source.context.messages.at(-1)).toEqual(input.context.messages.at(-1));
+    const envelope: { messages: Array<{ role: string; content: unknown; tool_call_id?: string }> } = JSON.parse(
+      result.text.split("<codex_context_json>\n")[1]!.split("\n</codex_context_json>")[0]!,
+    );
+    expect(envelope.messages.at(-1)).toEqual({ role: "user", content: input.context.messages.at(-1)!.content });
+    return { source, compiled: result, messages: envelope.messages.slice(0, -1) };
+  });
+  expect(input).toEqual(before);
+  return compiled;
 }
 
 test("custom plugin identity stays explicit in inline and multipart execution without rewriting task history", () => {
@@ -309,7 +341,7 @@ test("compaction prompts are isolated summarization turns without local or nativ
   expect(compiled.text).not.toContain("missing local-computer bridge");
 });
 
-test("Web compaction trims only the oldest history until the browser request fits", () => {
+test("Web compaction partitions all history in order within the inline byte budget", () => {
   const compact = request("high");
   compact._compactionRequest = true;
   compact.context.systemPrompt = [];
@@ -325,20 +357,17 @@ test("Web compaction trims only the oldest history until the browser request fit
     { role: "user", content: "checkpoint-now", timestamp: 5 },
   ];
 
-  const compiled = compileChatGptWebPrompt(
-    compact,
-    { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true },
-  );
-  const encoded = compiled.text.match(/<codex_context_json>\n(.+)\n<\/codex_context_json>/s)?.[1];
-  const envelope = JSON.parse(encoded!) as { messages: Array<{ role: string; content: unknown }> };
-
-  expect(chatGptPromptJsonBytes(compiled.text)).toBeLessThanOrEqual(CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET);
-  expect(compiled.trimmedCompactionMessages).toBe(2);
-  expect(compiled.text).not.toContain("oldest-static");
-  expect(compiled.text).not.toContain("newer-static");
-  expect(compiled.text).toContain("real-task-");
-  expect(compiled.text).toContain("verified-progress");
-  expect(envelope.messages.at(-1)).toEqual({ role: "user", content: "checkpoint-now" });
+  const before = structuredClone(compact);
+  const parts = compileInlineSourceParts(compact);
+  expect(parts.flatMap(part => part.source.context.messages.slice(0, -1)))
+    .toEqual(compact.context.messages.slice(0, -1));
+  expect(parts.flatMap(part => part.messages)).toEqual([
+    { role: "developer", content: compact.context.messages[0]!.content },
+    { role: "developer", content: compact.context.messages[1]!.content },
+    { role: "user", content: compact.context.messages[2]!.content },
+    { role: "assistant", content: [{ type: "text", text: "verified-progress" }] },
+  ]);
+  expect(compact).toEqual(before);
 
   const normal = structuredClone(compact);
   delete normal._compactionRequest;
@@ -351,7 +380,7 @@ test("Web compaction trims only the oldest history until the browser request fit
   expect(untrimmed.trimmedCompactionMessages).toBeUndefined();
 });
 
-test("inline compaction carries the newest cumulative checkpoint across discarded tool output", () => {
+test("inline compaction preserves every checkpoint and tool output across source parts", () => {
   for (const textParts of [false, true]) {
     const compact = request("high");
     compact._compactionRequest = true;
@@ -366,27 +395,26 @@ test("inline compaction carries the newest cumulative checkpoint across discarde
       { role: "user", content: "checkpoint-now", timestamp: 5 },
     ];
     const before = structuredClone(compact);
-    const compiled = compileChatGptWebPrompt(compact, {
-      localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true,
-    });
-    const envelope = JSON.parse(compiled.text.split("<codex_context_json>\n")[1]!.split("\n</codex_context_json>")[0]!);
-    expect(envelope.messages.map((message: { role: string }) => message.role)).toEqual(["user", "assistant", "user"]);
-    expect(JSON.stringify(envelope.messages[0])).toContain("Verified cumulative scope:");
-    expect(envelope.messages.at(-1).content).toBe("checkpoint-now");
-    expect(compiled.text).not.toContain("Obsolete summary");
-    expect(compiled.images).toEqual([]);
-    expect(compiled.trimmedCompactionMessages).toBe(2);
-    expect(compiled.text).toContain("history is incomplete");
-    expect(compiled.text).not.toContain("The task context is complete.");
-    expect(chatGptPromptJsonBytes(compiled.text)).toBeLessThanOrEqual(CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET);
+    const parts = compileInlineSourceParts(compact);
+    expect(parts.flatMap(part => part.source.context.messages.slice(0, -1)))
+      .toEqual(compact.context.messages.slice(0, -1));
+    const messages = parts.flatMap(part => part.messages);
+    expect(messages.map(message => message.role)).toEqual(["user", "user", "tool_result", "assistant"]);
+    expect(messages[0]!.content).toBe(`${SUMMARY_PREFIX}\nObsolete summary`);
+    expect(messages[1]!.content).toBe(checkpoint);
+    expect(messages[2]!.tool_call_id).toBe("old-output");
+    expect(messages[2]!.content).toEqual([
+      { type: "text", text: "x".repeat(100_000) },
+      { type: "image_attachment", attachment_ref: "codex-input-image-1" },
+    ]);
+    expect(messages[3]!.content).toEqual([{ type: "text", text: "recent verified progress" }]);
+    expect(parts.flatMap(part => part.compiled.images).map(image => image.imageUrl))
+      .toEqual(["data:image/png;base64,old-image"]);
+    expect(() => compileChatGptWebPrompt(compact, {
+      ...compactionCapabilities, localToolsEnabled: true,
+    }, "turn_12345678901234567890123456789012", { manualControl: true }))
+      .toThrow("complete history");
     expect(compact).toEqual(before);
-    const manual = compileChatGptWebPrompt(compact, {
-      localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true,
-    }, "turn_12345678901234567890123456789012", { manualControl: true });
-    expect(manual.text).toContain("Verified cumulative scope:");
-    expect(manual.text).toContain("history is incomplete");
-    expect(manual.text).not.toContain("without calling tools");
-    expect(chatGptPromptJsonBytes(manual.text)).toBeLessThanOrEqual(CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET);
   }
 });
 
@@ -401,7 +429,7 @@ test("inline compaction rejects a required checkpoint that cannot fit instead of
   ];
   expect(() => compileChatGptWebPrompt(compact, {
     localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true,
-  })).toThrow("cumulative checkpoint");
+  })).toThrow("complete history");
 });
 
 test("Bigger Context compaction preserves history above the retired inline byte budget", () => {
@@ -462,7 +490,7 @@ test("Bigger Context keeps preliminary parts small and preserves all records in 
   expect(multipart.multipart!.parts.at(-1)!.length).toBeLessThan(1_048_572);
 }, 30_000);
 
-test("Web compaction rebuilds attachments after trimming an oversized oldest image message", () => {
+test("Web compaction partitions an oversized oldest image message without losing its attachment", () => {
   const compact = request("high");
   compact._compactionRequest = true;
   compact.context.systemPrompt = [];
@@ -478,17 +506,16 @@ test("Web compaction rebuilds attachments after trimming an oversized oldest ima
     { role: "user", content: "preserve-latest-checkpoint", timestamp: 2 },
   ];
 
-  const compiled = compileChatGptWebPrompt(
-    compact,
-    { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true },
-  );
-
-  const envelope = compiled.text.split("<codex_context_json>")[1]!.split("</codex_context_json>")[0]!;
-  expect(compiled.images).toEqual([]);
-  expect(compiled.trimmedCompactionMessages).toBe(1);
-  expect(compiled.text).not.toContain("discard-");
-  expect(envelope).not.toContain("image_attachment");
-  expect(compiled.text).toContain("preserve-latest-checkpoint");
+  const before = structuredClone(compact);
+  const parts = compileInlineSourceParts(compact);
+  expect(parts.flatMap(part => part.compiled.images).map(image => image.imageUrl))
+    .toEqual(["data:image/png;base64,discarded-image"]);
+  const text = parts.flatMap(part => part.messages).flatMap(message =>
+    typeof message.content === "string" ? [message.content] : []);
+  expect(text.join("")).toBe(`discard-${"x".repeat(120_000)}`);
+  expect(parts.flatMap(part => part.messages).at(-1)!.content)
+    .toEqual([{ type: "image_attachment", attachment_ref: "codex-input-image-1" }]);
+  expect(compact).toEqual(before);
 });
 
 test("Luna rejects a separate compaction prompt because continuity is already rolling", () => {
@@ -510,7 +537,7 @@ test("Web compaction fails closed when its final instruction alone exceeds the t
   expect(() => compileChatGptWebPrompt(
     compact,
     { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true },
-  )).toThrow("final compaction instruction alone exceeds");
+  )).toThrow("complete history");
 });
 
 test("assigns prior assistant output to the model and never attributes Codex context to the human", () => {

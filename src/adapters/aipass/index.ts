@@ -8,6 +8,8 @@ const healthSchema = z.object({
   capabilities: z.object({ isolatedTurns: z.literal(true), automaticRetries: z.literal(false) }),
 });
 const chunkSchema = z.object({
+  requested_model: z.string().optional(),
+  upstream_model: z.string().regex(/^[a-zA-Z0-9@._:/-]{1,256}$/).nullable().optional(),
   choices: z.array(z.object({
     index: z.literal(0),
     delta: z.object({ role: z.literal("assistant").optional(), content: z.string().nullable().optional(), reasoning_content: z.string().optional() }).strict(),
@@ -55,8 +57,9 @@ async function* sseData(body: ReadableStream<Uint8Array>, signal: AbortSignal): 
 }
 
 /** Experimental WEB wrapper. Tool framing is model-mediated; fixture success is not live provider proof. */
-export function createAiPassAdapter({ bridgeUrl, model, thinking = [] }: {
+export function createAiPassAdapter({ bridgeUrl, model, thinking = [], onModelIdentity }: {
   bridgeUrl: string; model: string; thinking?: readonly string[];
+  onModelIdentity?: (upstreamModel: string) => void;
 }): ProviderAdapter {
   const origin = bridgeOrigin(bridgeUrl);
   if (!model.trim() || model !== model.trim()) throw new Error("AI Pass requires an explicit bridge model");
@@ -128,6 +131,14 @@ export function createAiPassAdapter({ bridgeUrl, model, thinking = [] }: {
               const failure = z.object({ error: z.object({ message: z.string() }) }).safeParse(raw);
               // The bridge diagnostic may contain upstream originalText (the full private prompt).
               const diagnostic = failure.success ? failure.data.error.message : "";
+              if (diagnostic.includes("AIPASS_MODEL_MISMATCH")) {
+                const upstreamModel = diagnostic.match(/\bactual=([a-zA-Z0-9@._:/-]{1,256})(?:\s|$)/)?.[1] ?? "unknown";
+                if (upstreamModel !== "unknown") onModelIdentity?.(upstreamModel);
+                throw new AiPassError(diagnostic.includes("reason=credit_not_enough")
+                  ? `TH AI Pass requested=${model}; upstream=${upstreamModel}; reason=credit_not_enough (insufficient upstream credits). The fallback response was rejected.`
+                  : `TH AI Pass requested=${model}; upstream=${upstreamModel}; reason=upstream_model_switch. The fallback response was rejected.`,
+                "aipass_model_mismatch", 409);
+              }
               const status = diagnostic.match(/aipass returned (\d{3})\b/)?.[1];
               const policy = diagnostic.includes('"code":"CHAT_RAI_VIOLATION"');
               throw new AiPassError(policy
@@ -135,6 +146,15 @@ export function createAiPassAdapter({ bridgeUrl, model, thinking = [] }: {
                 : `AI Pass bridge reported a streamed error${status ? ` (upstream HTTP ${status})` : ""}.`, "aipass_upstream_error");
             }
             const chunk = chunkSchema.parse(raw);
+            if (chunk.requested_model !== undefined && chunk.requested_model !== model) {
+              throw new AiPassError("AI Pass bridge returned a different requested model", "aipass_model_mismatch", 409);
+            }
+            if (chunk.upstream_model) {
+              if (model !== "auto" && chunk.upstream_model !== model) {
+                throw new AiPassError(`TH AI Pass requested=${model}; upstream=${chunk.upstream_model}; fallback rejected.`, "aipass_model_mismatch", 409);
+              }
+              onModelIdentity?.(chunk.upstream_model);
+            }
             if (finish) throw new AiPassError("Bridge sent output after a terminal finish reason");
             const choice = chunk.choices[0];
             if (choice.delta.reasoning_content && !parsed.options.hideThinkingSummary) emit({ type: "thinking_delta", thinking: choice.delta.reasoning_content });
