@@ -153,7 +153,9 @@ export function estimateChatGptWebUsage(
   experimentalSkillAttachments = false,
   appName?: string,
 ): CodexUsage {
-  const inputTokens = estimateChatGptWebInputTokens(parsed, capabilities, {
+  // Logical source usage can exceed one browser call when compaction uses multiple summaries.
+  const usageInput = parsed._compactionRequest ? { ...parsed, _compactionRequest: false } : parsed;
+  const inputTokens = estimateChatGptWebInputTokens(usageInput, capabilities, {
     appName,
     ...(experimentalBiggerContext ? { captureLunaCheckpoint: false } : {}),
     experimentalSkillAttachments,

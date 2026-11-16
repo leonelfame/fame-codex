@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { isSupportedBunVersion } from "./bun-version";
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
@@ -12,20 +13,24 @@ const packageVersion = packageJson.version;
 if (!packageVersion) throw new Error("package.json has no version");
 const packageManagerMatch = /^bun@(\d+\.\d+\.\d+)$/.exec(packageJson.packageManager ?? "");
 if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun packageManager version");
-const bunVersion = packageManagerMatch[1];
-if (Bun.version !== bunVersion) throw new Error(`Expected Bun ${bunVersion}, received ${Bun.version}`);
+const bunVersion = packageManagerMatch[1]!;
+if (!isSupportedBunVersion(Bun.version, bunVersion)) {
+  throw new Error(`Requires Bun >=${bunVersion}, received ${Bun.version}`);
+}
 if (packageJson.devDependencies?.["@types/bun"] !== bunVersion) {
   throw new Error(`@types/bun is not synchronized to ${bunVersion}`);
 }
-if (packageJson.engines?.bun !== bunVersion) throw new Error(`engines.bun is not synchronized to ${bunVersion}`);
+if (packageJson.engines?.bun !== `>=${bunVersion}`) {
+  throw new Error(`engines.bun must require Bun >=${bunVersion}`);
+}
 const expected = [
   ["src/version.ts", `export const VERSION = ${JSON.stringify(packageVersion)};`],
   ["src/adapters/chatgpt-web/mcp-server.ts", "version: VERSION"],
   ["scripts/install.sh", `VERSION=\"\${CODEX_CHATGPT_WEB_VERSION:-${packageVersion}}\"`],
-  ["README.md", `requires Bun ${bunVersion}.`],
+  ["README.md", `requires Bun ${bunVersion} or newer.`],
   ["README.zh-CN.md", `Bun ${bunVersion}`],
   ["scripts/install.sh", `Bun-${bunVersion}.md`],
-  ["scripts/generate-third-party-notices.ts", `Bun ${bunVersion}`],
+  ["scripts/generate-third-party-notices.ts", `Bun-${bunVersion}.md`],
   ["scripts/prepare-windows-baseline-bun.ps1", `bun-v$Version`],
   [".github/workflows/ci.yml", `bun-version: ${bunVersion}`],
   [".github/workflows/ci.yml", `-Version ${bunVersion}`],
@@ -56,4 +61,4 @@ if (releaseWorkflow.split(`bun-version: ${bunVersion}`).length - 1 !== 2) {
 }
 const launcherVersion = (JSON.parse(readFileSync(resolve(root, "launcher/package.json"), "utf8")) as { version?: string }).version;
 if (launcherVersion !== packageVersion) throw new Error(`launcher/package.json is not synchronized to ${packageVersion}`);
-process.stdout.write(`VERSION_SYNC_OK ${packageVersion} bun@${bunVersion}\n`);
+process.stdout.write(`VERSION_SYNC_OK ${packageVersion} bun>=${bunVersion} (running ${Bun.version})\n`);

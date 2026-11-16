@@ -340,6 +340,7 @@ class Job {
     this.outputFormat = outputFormat;
     this.timeoutMs = timeoutMs ?? IDLE_TIMEOUT_MS;
     this.modelId = modelId;
+    this.upstreamModel = null;
     this.text = text;
     this.parts = parts;
     this.conversationId = conversationId;
@@ -369,7 +370,22 @@ class Job {
       ? { jobId: this.id, kind: 'video', conversationId: this.conversationId, modelId: this.modelId, text: this.text, ...this.video }
       : { jobId: this.id, kind: 'chat', conversationId: this.conversationId, modelId: this.modelId, text: this.text, parts: this.parts, aspectRatio: this.aspectRatio, temporary: this.temporary, thinkingLevel: this.thinkingLevel, imageStyleId: this.imageStyleId, outputTone: this.outputTone, outputFormat: this.outputFormat });
   }
-  delta(part) { if (!this.settled) { this.touch(); this.onDelta(part); } }
+  delta(part) {
+    if (this.settled) return;
+    if (part.kind === 'model') {
+      try {
+        const identity = JSON.parse(part.text);
+        if (identity.requestedModel !== this.modelId || typeof identity.upstreamModel !== 'string'
+          || !/^[a-zA-Z0-9@._:/-]{1,256}$/.test(identity.upstreamModel)) throw new Error('invalid model identity');
+        this.upstreamModel = identity.upstreamModel;
+        if (this.modelId !== 'auto' && this.upstreamModel !== this.modelId) {
+          this.fail(`AIPASS_MODEL_MISMATCH requested=${this.modelId} actual=${this.upstreamModel} reason=${identity.reason === 'credit_not_enough' ? 'credit_not_enough' : 'upstream_model_switch'}`);
+          return;
+        }
+      } catch { this.fail('invalid upstream model identity'); return; }
+    }
+    this.touch(); this.onDelta(part);
+  }
   done(value) { if (this.settled) return; this.cleanup(); this.onDone(value ?? 'stop'); }
   fail(message) { if (this.settled) return; this.cleanup(); this.onError(message); }
   abort() {
@@ -973,6 +989,7 @@ async function chatCompletions(req, res, conversationId, suppliedPayload, defaul
   const imageCount = (parts ?? []).filter(p => p.type === 'image').length;
   log(`chat -> ${model} (${Buffer.byteLength(text)} bytes text${imageCount ? `, ${imageCount} image(s)` : ''})`);
 
+  let upstreamModel = null;
   if (payload.stream) {
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -994,6 +1011,7 @@ async function chatCompletions(req, res, conversationId, suppliedPayload, defaul
     const emit = (delta, finish = null) => {
       res.write(`data: ${JSON.stringify({
         id, object: 'chat.completion.chunk', created, model,
+        requested_model: model, upstream_model: upstreamModel,
         choices: [{ index: 0, delta, finish_reason: finish }],
       })}\n\n`);
     };
@@ -1003,6 +1021,7 @@ async function chatCompletions(req, res, conversationId, suppliedPayload, defaul
       modelId: model, text, parts, conversationId, aspectRatio: ratio, thinkingLevel, video,
       imageStyleId, outputTone, outputFormat,
       onDelta: (part) => {
+        if (part.kind === 'model') { upstreamModel = JSON.parse(part.text).upstreamModel; emit({}); return; }
         if (part.kind === 'status') {
           if (TOOL_VISIBILITY === 'off') return;
           if (TOOL_VISIBILITY === 'text') emit({ content: `\n${part.text}\n` });
@@ -1037,6 +1056,7 @@ async function chatCompletions(req, res, conversationId, suppliedPayload, defaul
       modelId: model, text, parts, conversationId, aspectRatio: ratio, thinkingLevel, video,
       imageStyleId, outputTone, outputFormat,
       onDelta: (p) => {
+        if (p.kind === 'model') { upstreamModel = JSON.parse(p.text).upstreamModel; return; }
         if (p.kind === 'status') { if (TOOL_VISIBILITY !== 'off') reasoning += `${p.text}\n`; return; }
         if (MEDIA_KINDS.has(p.kind)) { out += mediaMarkdown(p.kind, p.text, p.filename); return; }
         if (p.kind === 'reasoning') reasoning += p.text;
@@ -1045,6 +1065,7 @@ async function chatCompletions(req, res, conversationId, suppliedPayload, defaul
       onDone: (finishReason) => {
         json(res, 200, {
           id, object: 'chat.completion', created, model,
+          requested_model: model, upstream_model: upstreamModel,
           choices: [{
             index: 0,
             message: { role: 'assistant', content: out, ...(reasoning ? { reasoning_content: reasoning } : {}) },

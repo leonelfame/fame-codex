@@ -47,7 +47,7 @@ The app includes its browser and runtime for ChatGPT. No separate Chrome, Node, 
 
 ## TH AI Pass (Experimental)
 
-TH AI Pass connects models available in your signed-in TH AI Pass account to Codex through a browser extension and a local bridge. It is disabled by default.
+TH AI Pass connects models available in your signed-in TH AI Pass account to Codex through a browser extension and a local bridge. It is disabled by default. Named model selections reject upstream fallback to another model. Auto selections report the upstream model separately when the service supplies its identity. Keep a signed-in TH AI Pass tab open; it can remain in the background, but must not be discarded or put to sleep by the browser.
 
 ### Setup
 
@@ -229,7 +229,7 @@ cd fame_codex && \
 bun run app
 ```
 
-This source path requires Bun 1.4.0. The command installs locked dependencies and opens the app.
+This source path requires Bun 1.4.0 or newer. The command installs locked dependencies and opens the app.
 
 ```bash
 bun run app

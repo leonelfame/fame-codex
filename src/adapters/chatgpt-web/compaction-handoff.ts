@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { parseDataUrl } from "../image";
 import type {
   CodexContentPart,
@@ -104,8 +105,13 @@ export function canonicalizeCompactionHandoff(
   if (latestUserPrompt === undefined) {
     throw new Error("ChatGPT compaction source has no canonical latest user prompt");
   }
-  const appendix = `${LATEST_USER_PROMPT_MARKER}\n${JSON.stringify(latestUserPrompt)}`;
-  const markerOffset = normalized.lastIndexOf(`\n${LATEST_USER_PROMPT_MARKER}\n`);
+  // The complete source is summarized before this boundary. Repeating an oversized
+  // source verbatim can make the checkpoint larger than the history it replaces.
+  const appendix = latestUserPrompt.length <= 8_192
+    ? `${LATEST_USER_PROMPT_MARKER}\n${JSON.stringify(latestUserPrompt)}`
+    : `CODEX_LATEST_USER_PROMPT_SHA256\n${createHash("sha256").update(latestUserPrompt).digest("hex")}`;
+  const markerOffset = Math.max(normalized.lastIndexOf(`\n${LATEST_USER_PROMPT_MARKER}\n`),
+    normalized.lastIndexOf("\nCODEX_LATEST_USER_PROMPT_SHA256\n"));
   if (markerOffset < 0) return `${normalized}\n\n${appendix}`;
   if (normalized.slice(markerOffset + 1).trimEnd() !== appendix) {
     throw new Error("ChatGPT compaction handoff contains a conflicting latest-user marker");

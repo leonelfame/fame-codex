@@ -17,7 +17,9 @@ export async function aiPassResponseRequest(req: Request, raw: unknown): Promise
     if (!selected) {
       return formatErrorResponse(400, "invalid_request_error", "Unknown TH AI Pass model. Refresh models with the extension connected.");
     }
-    const adapter = createAiPassAdapter({ bridgeUrl: AIPASS_BRIDGE_URL, model, thinking: selected.thinking });
+    let upstreamModel: string | null = null;
+    const adapter = createAiPassAdapter({ bridgeUrl: AIPASS_BRIDGE_URL, model, thinking: selected.thinking,
+      onModelIdentity: actual => { upstreamModel = actual; } });
     const queue = new AsyncEventQueue<AdapterEvent>();
     const abort = new AbortController();
     const cancel = () => abort.abort(req.signal.reason);
@@ -41,7 +43,10 @@ export async function aiPassResponseRequest(req: Request, raw: unknown): Promise
       if (tool.freeform) freeformToolNames.add(tool.name);
       if (tool.toolSearch) toolSearchToolNames.add(tool.name);
     }
-    const remember = (response: Parameters<typeof rememberResponseState>[1]) => rememberResponseState(expanded, response, { force: true });
+    const remember = (response: Parameters<typeof rememberResponseState>[1]) => {
+      Object.assign(response, { metadata: { aipass_requested_model: model, aipass_upstream_model: upstreamModel } });
+      rememberResponseState(expanded, response, { force: true });
+    };
     const maps = { toolNsMap, freeformToolNames, toolSearchToolNames, hideThinkingSummary: parsed.options.hideThinkingSummary };
     if (parsed.stream) {
       void run();

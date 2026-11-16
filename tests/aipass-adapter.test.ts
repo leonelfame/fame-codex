@@ -104,6 +104,14 @@ test("the budget counts tokens in the outbound prompt and rejects oversized cont
   expect(() => prepareTurn(parsed)).toThrow("Reduce enabled tools or shorten the session");
 });
 
+test("upstream credit fallback is an explicit model mismatch rather than a successful answer", async () => {
+  const f = fixture({ chat: () => stream(`data: ${JSON.stringify({ error: { message: 'AIPASS_MODEL_MISMATCH requested=fixture-model actual=gemini-3.5-flash-lite reason=credit_not_enough' } })}\n\ndata: [DONE]\n\n`) });
+  const events = await run(f.bridgeUrl);
+  expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "aipass_model_mismatch", status: 409, retryable: false,
+    message: expect.stringContaining("insufficient upstream credits") }));
+  expect(finalText(events)).toBe("");
+});
+
 test("upstream policy errors identify the refusal without exposing the echoed private prompt", async () => {
   const f = fixture({ chat: () => stream(`data: ${JSON.stringify({ error: { message: 'aipass returned 422 — {"code":"CHAT_RAI_VIOLATION","originalText":"PRIVATE_PROMPT"}' } })}\n\ndata: [DONE]\n\n`) });
   const events = await run(f.bridgeUrl);

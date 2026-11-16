@@ -39,6 +39,7 @@ export type CodexMessage =
 
 export interface CodexUserMessage {
   role: "user";
+  compactionSource?: { encryptedContent: string };
   /** Native Responses metadata, never inferred from message text. */
   origin?: "codex_skill";
   content: string | CodexContentPart[];

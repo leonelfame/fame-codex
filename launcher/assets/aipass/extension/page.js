@@ -281,6 +281,7 @@
 
       const body = JSON.stringify({
         modelId: job.modelId,
+        routing: job.modelId === 'auto' ? 'auto' : 'manual',
         // The image models take this; the chat models ignore it. The web UI
         // offers 1:1, 3:4 and 4:3.
         imageAspectRatio: job.aspectRatio || '1:1',
@@ -388,6 +389,16 @@
           // stream their progress here. Dropping these frames silently makes a
           // long search look like a hang.
           switch (evt.type) {
+            case 'data-router_decision':
+            case 'data-model_switched': {
+              const selected = evt.data?.toModelId ?? evt.data?.effectiveModelId;
+              if (typeof selected === 'string') push('model', JSON.stringify({ requestedModel: job.modelId, upstreamModel: selected, reason: evt.data?.reason }));
+              if (job.modelId !== 'auto' && typeof selected === 'string' && selected !== job.modelId) {
+                await reader.cancel().catch(() => {});
+                throw new Error(`AIPASS_MODEL_MISMATCH requested=${job.modelId} actual=${selected} reason=${evt.data?.reason === 'credit_not_enough' ? 'credit_not_enough' : 'upstream_model_switch'}`);
+              }
+              break;
+            }
             case 'text-delta':
               push('text', evt.delta);
               break;
